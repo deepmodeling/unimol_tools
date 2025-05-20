@@ -455,6 +455,8 @@ class Trainer(object):
             desc='Train' if not self.ddp else f'Train Rank:{dist.get_rank()}',
             ncols=5,
         )
+        if isinstance(train_dataloader.sampler, torch.utils.data.distributed.DistributedSampler):
+            train_dataloader.sampler.set_epoch(epoch)
         for i, batch in enumerate(train_dataloader):
             net_input, net_target = self.decorate_batch(batch, feature_name)
             optimizer.zero_grad()
