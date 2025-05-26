@@ -1,6 +1,21 @@
+# Uni-Mol Tools
+
+<img src = "https://bohrium.oss-cn-zhangjiakou.aliyuncs.com/article/16664/d50607556c5c4076bf3df363a7f1aedf/4feaf601-09b6-4bcb-85a0-70890c36c444.png" width = 40%>
+
+[![GitHub release](https://img.shields.io/github/release/deepmodeling/unimol_tools.svg)](https://github.com/deepmodeling/unimol_tools/releases/)
+[![PyPI version](https://img.shields.io/pypi/v/unimol-tools.svg)](https://pypi.org/project/unimol-tools/)
+![Python versions](https://img.shields.io/pypi/pyversions/unimol-tools.svg)
+[![License](https://img.shields.io/github/license/deepmodeling/unimol_tools.svg)](https://github.com/deepmodeling/unimol_tools/blob/main/LICENSE)
+[![GitHub issues](https://img.shields.io/github/issues/deepmodeling/unimol_tools.svg)](https://github.com/deepmodeling/unimol_tools/issues)
+[![GitHub contributors](https://img.shields.io/github/contributors/deepmodeling/unimol_tools.svg)](https://github.com/deepmodeling/unimol_tools/graphs/contributors)
+![Maintained](https://img.shields.io/badge/Maintained%3F-yes-blue.svg)
+[![Documentation Status](https://readthedocs.org/projects/unimol/badge/?version=latest)](https://unimol.readthedocs.io/en/latest/?badge=latest)
+
+Unimol_tools is a easy-use wrappers for property prediction,representation and downstreams with Uni-Mol.
+
 # Uni-Mol tools for various prediction and downstreams.
 
-Documentation of Uni-Mol tools is available at https://unimol.readthedocs.io/en/latest/
+📖 Documentation: [unimol_tools.readthedocs.io](https://unimol_tools.readthedocs.io/en/latest/)
 
 ## Install
 - pytorch is required, please install pytorch according to your environment. if you are using cuda, please install pytorch with cuda. More details can be found at https://pytorch.org/get-started/locally/
@@ -55,6 +70,7 @@ export UNIMOL_WEIGHT_DIR=/path/to/your/weights/dir/
 ```
 
 ## News
+- 2025-05-26: Unimol_tools is now independent from the Uni-Mol repository!
 - 2025-03-28: Unimol_tools now support Distributed Data Parallel (DDP)!
 - 2024-11-22: Unimol V2 has been added to Unimol_tools!
 - 2024-07-23: User experience improvements: Add `UNIMOL_WEIGHT_DIR`.

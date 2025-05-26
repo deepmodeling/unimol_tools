@@ -3,7 +3,7 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to Uni-Mol' documentation!
+Welcome to unimol-tools' documentation!
 ==========================================
 
 Uni-Mol is the first universal large-scale three-dimensional Molecular Representation Learning (MRL) framework developed by the DP Technology. It expands the application scope and representation capabilities of MRL. 
@@ -44,7 +44,7 @@ Uni-Mol tools is a easy-use wrappers for property prediction,representation and 
 
 .. toctree::
    :maxdepth: 2
-   :caption: Uni-Mol tools:
+   :caption: unimol-tools API:
 
    train
    data
