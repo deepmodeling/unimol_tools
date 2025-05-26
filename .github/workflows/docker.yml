@@ -18,14 +18,28 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Install build tools
+        run: |
+          pip install setuptools wheel twine
+
       - name: Build core package
         env:
           FLASH_ATTENTION_SKIP_CUDA_BUILD: "TRUE"
         run: |
-          pip install setuptools wheel twine
           python setup.py sdist --dist-dir=dist
 
-      - name: Deploy
+      - name: Check if version exists on PyPI
+        id: check-version
+        run: |
+          VERSION=$(python setup.py --version)
+          PACKAGE_NAME=$(python setup.py --name)
+          echo "Detected version: $VERSION"
+          echo "Detected package: $PACKAGE_NAME"
+          EXISTS=$(curl --silent -f https://pypi.org/pypi/${PACKAGE_NAME}/${VERSION}/json > /dev/null && echo "yes" || echo "no")
+          echo "exists=$EXISTS" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to PyPI
+        if: steps.check-version.outputs.exists == 'no'
         env:
           TWINE_USERNAME: "__token__"
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
