@@ -4,6 +4,7 @@ on:
   push:
     branches:
     - main
+    - pypi_test
 
 jobs:
   publish_package:
@@ -22,7 +23,6 @@ jobs:
           FLASH_ATTENTION_SKIP_CUDA_BUILD: "TRUE"
         run: |
           pip install setuptools wheel twine
-          cd unimol_tools
           python setup.py sdist --dist-dir=dist
 
       - name: Deploy
@@ -30,5 +30,4 @@ jobs:
           TWINE_USERNAME: "__token__"
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
-          cd unimol_tools
           python -m twine upload dist/*
