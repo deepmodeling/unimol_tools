@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
     name="unimol_tools",
-    version="0.1.3.post1",
+    version="0.1.4",
     description=(
         "unimol_tools is a Python package for property prediction with Uni-Mol in molecule, materials and protein."
     ),
@@ -14,7 +14,7 @@ setup(
     author="DP Technology",
     author_email="unimol@dp.tech",
     license="The MIT License",
-    url="https://github.com/deepmodeling/Uni-Mol/unimol_tools",
+    url="https://github.com/deepmodeling/unimol_tools",
     packages=find_packages(
         where='.',
         exclude=[

@@ -27,8 +27,8 @@ pip install huggingface_hub
 pip install -r requirements.txt
 
 ## Clone repository
-git clone https://github.com/deepmodeling/Uni-Mol.git
-cd Uni-Mol/unimol_tools
+git clone https://github.com/deepmodeling/unimol_tools.git
+cd unimol_tools
 
 ## Install
 python setup.py install

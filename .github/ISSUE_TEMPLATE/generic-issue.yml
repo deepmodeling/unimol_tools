@@ -16,8 +16,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Uni-Mol Version
-      description: "The version of Uni-Mol you are using, e.g. Uni-Mol, Uni-Mol2, Uni-Mol Tools, etc."
+      label: unimol_tools Version
+      description: "The version of unimol_tools you are using."
     validations:
       required: true
   - type: textarea

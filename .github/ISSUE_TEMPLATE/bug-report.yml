@@ -1,5 +1,5 @@
 name: Bug report
-description: Create a bug report to help us eliminate issues and improve Uni-Mol.
+description: Create a bug report to help us eliminate issues and improve unimol_tools.
 title: "[BUG] _Replace With Suitable Title_"
 labels: bug
 assignees: []
@@ -15,8 +15,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Uni-Mol Version
-      description: "The version of Uni-Mol you are using, e.g. Uni-Mol, Uni-Mol2, Uni-Mol Tools, etc."
+      label: unimol_tools Version
+      description: "The version of unimol_tools you are using."
     validations:
       required: true
 

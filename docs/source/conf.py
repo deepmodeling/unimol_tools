@@ -6,7 +6,7 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'Uni-Mol'
+project = 'unimol_tools'
 copyright = '2023, cuiyaning'
 author = 'cuiyaning'
 release = '0.1.1'
