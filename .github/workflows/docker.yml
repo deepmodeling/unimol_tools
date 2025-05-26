@@ -54,6 +54,8 @@ jobs:
         run: |
           TAG="v${{ steps.version.outputs.version }}"
           EXISTS=$(gh release view "$TAG" > /dev/null 2>&1 && echo "yes" || echo "no")
+          echo "Release tag: $TAG"
+          echo "Release exists: $EXISTS"
           echo "exists=$EXISTS" >> "$GITHUB_OUTPUT"
 
 
