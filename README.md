@@ -15,7 +15,7 @@ Unimol_tools is a easy-use wrappers for property prediction,representation and d
 
 # Uni-Mol tools for various prediction and downstreams.
 
-📖 Documentation: [unimol_tools.readthedocs.io](https://unimol_tools.readthedocs.io/en/latest/)
+📖 Documentation: [unimol-tools.readthedocs.io](https://unimol-tools.readthedocs.io/en/latest/)
 
 ## Install
 - pytorch is required, please install pytorch according to your environment. if you are using cuda, please install pytorch with cuda. More details can be found at https://pytorch.org/get-started/locally/
