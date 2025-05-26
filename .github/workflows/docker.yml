@@ -4,7 +4,7 @@ on:
   push:
     branches:
     - main
-    - pypi_test
+    - actions
 
 jobs:
   publish_package:
@@ -45,3 +45,27 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
           python -m twine upload dist/*
+
+
+      - name: Check if GitHub Release exists
+        id: check-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          EXISTS=$(gh release view "$TAG" > /dev/null 2>&1 && echo "yes" || echo "no")
+          echo "exists=$EXISTS" >> "$GITHUB_OUTPUT"
+
+
+      - name: Debug Release Check
+        run: |
+          echo "Release exists: ${{ steps.check-release.outputs.exists }}"
+
+      - name: Create GitHub Release
+        if: steps.check-release.outputs.exists == 'no'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create v${{ steps.version.outputs.version }} dist/* \
+            --title "Release v${{ steps.version.outputs.version }}" \
+            --notes "Automated release from GitHub Actions"
