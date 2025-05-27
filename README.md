@@ -76,9 +76,10 @@ export UNIMOL_WEIGHT_DIR=/path/to/your/weights/dir/
 - 2024-07-23: User experience improvements: Add `UNIMOL_WEIGHT_DIR`.
 - 2024-06-25: unimol_tools has been publish to pypi! Huggingface has been used to manage the pretrain models.
 - 2024-06-20: unimol_tools v0.1.0 released, we remove the dependency of Uni-Core. And we will publish to pypi soon.
-- 2024-03-20: unimol_tools documents is available at https://unimol.readthedocs.io/en/latest/
+- 2024-03-20: unimol_tools documents is available at https://unimol-tools.readthedocs.io/en/latest/
 
-## molecule property prediction
+## Examples
+### Molecule property prediction
 ```python
 from unimol_tools import MolTrain, MolPredict
 clf = MolTrain(task='classification', 
@@ -94,7 +95,7 @@ pred = clf.fit(data = data)
 clf = MolPredict(load_model='../exp')
 res = clf.predict(data = data)
 ```
-## unimol molecule and atoms level representation
+### Molecule representation
 ```python
 import numpy as np
 from unimol_tools import UniMolRepr
@@ -109,16 +110,12 @@ print(np.array(unimol_repr['cls_repr']).shape)
 print(np.array(unimol_repr['atomic_reprs']).shape)
 ```
 
-Please kindly cite our papers if you use the data/code/model.
+## Credits
+We thanks all contributors from the community for their suggestions, bug reports and chemistry advices. Currently unimol-tools is maintained by Yaning Cui, Xiaohong Ji, Zhifeng Gao from DP Technology and AI for Science Insitution, Beijing.
+
+Please kindly cite our papers if you use this tools.
 ```
-@inproceedings{
-  zhou2023unimol,
-  title={Uni-Mol: A Universal 3D Molecular Representation Learning Framework},
-  author={Gengmo Zhou and Zhifeng Gao and Qiankun Ding and Hang Zheng and Hongteng Xu and Zhewei Wei and Linfeng Zhang and Guolin Ke},
-  booktitle={The Eleventh International Conference on Learning Representations },
-  year={2023},
-  url={https://openreview.net/forum?id=6K2RM6wVqKu}
-}
+
 @article{gao2023uni,
   title={Uni-qsar: an auto-ml tool for molecular property prediction},
   author={Gao, Zhifeng and Ji, Xiaohong and Zhao, Guojiang and Wang, Hongshuai and Zheng, Hang and Ke, Guolin and Zhang, Linfeng},
