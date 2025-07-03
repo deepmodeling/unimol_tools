@@ -86,11 +86,11 @@ class UniMolRepr(object):
             'save_path': save_path,
         }
 
-    def get_repr(self, data=None, return_atomic_reprs=False):
+    def get_repr(self, data=None, return_atomic_reprs=False, return_tensor=False):
         """
         Get molecular representation by unimol.
 
-        :param data: str, dict or list, default=None, input data for unimol.
+        :param data: str, dict, list or numpy, default=None, input data for unimol.
 
             - str: smiles string or path to a smiles file.
 
@@ -98,9 +98,16 @@ class UniMolRepr(object):
 
             - list: list of smiles strings.
 
+            - numpy: numpy.ndarray of smiles strings
+
         :param return_atomic_reprs: bool, default=False, whether to return atomic representations.
 
-        :return: dict of molecular representation.
+        :param return_tensor: bool, default=False, whether to return tensor representations. Only works when return_atomic_reprs=False.
+
+        :return: 
+            if return_atomic_reprs=True: dict of molecular representation.
+            if return_atomic_reprs=False and return_tensor=False: list of molecular representation.
+            if return_atomic_reprs=False and return_tensor=True: tensor of molecular representation.
         """
 
         if isinstance(data, str):
@@ -123,6 +130,10 @@ class UniMolRepr(object):
             # list of smiles strings.
             assert isinstance(data[-1], str)
             data = np.array(data)
+        elif isinstance(data, np.ndarray):
+            # numpy array of smiles strings.
+            if data.ndim == 1 and isinstance(data[0], str):
+                pass
         else:
             raise ValueError('Unknown data type: {}'.format(type(data)))
 
@@ -136,8 +147,10 @@ class UniMolRepr(object):
         self.trainer = Trainer(task='repr', **self.params)
         repr_output = self.trainer.inference(
             self.model,
+            model_name=self.params['model_name'],
             return_repr=True,
             return_atomic_reprs=return_atomic_reprs,
             dataset=dataset,
+            return_tensor=return_tensor,
         )
         return repr_output
