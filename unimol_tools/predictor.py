@@ -132,8 +132,7 @@ class UniMolRepr(object):
             data = np.array(data)
         elif isinstance(data, np.ndarray):
             # numpy array of smiles strings.
-            if data.ndim == 1 and isinstance(data[0], str):
-                pass
+            assert isinstance(data[0], str)
         else:
             raise ValueError('Unknown data type: {}'.format(type(data)))
 
