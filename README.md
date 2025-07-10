@@ -88,12 +88,12 @@ clf = MolTrain(task='classification',
                 batch_size=16, 
                 metrics='auc',
                 )
-pred = clf.fit(data = data)
+pred = clf.fit(data = train_data)
 # currently support data with smiles based csv/txt file, and
-# custom dict of {'atoms':[['C','C],['C','H','O']], 'coordinates':[coordinates_1,coordinates_2]}
+# custom dict of {'atoms':[['C','C'],['C','H','O']], 'coordinates':[coordinates_1,coordinates_2]}
 
 clf = MolPredict(load_model='../exp')
-res = clf.predict(data = data)
+res = clf.predict(data = test_data)
 ```
 ### Molecule representation
 ```python

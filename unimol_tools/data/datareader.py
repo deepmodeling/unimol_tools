@@ -49,13 +49,12 @@ class MolDataReader(object):
 
         if isinstance(data, str):
             # load from file
-            self.data_path = data
             if data.endswith('.sdf'):
                 # load sdf file
                 data = PandasTools.LoadSDF(data)
                 data = self._convert_numeric_columns(data)
             elif data.endswith('.csv'):
-                data = pd.read_csv(self.data_path)
+                data = pd.read_csv(data)
             else:
                 raise ValueError('Unknown file type: {}'.format(data))
         elif isinstance(data, dict):
@@ -69,11 +68,20 @@ class MolDataReader(object):
                         data[target_col_prefix + str(i)] = label[:, i]
 
             _ = data.pop('target', None)
-            data = pd.DataFrame(data).rename(columns={smiles_col: 'SMILES'})
+            data = pd.DataFrame(data)
 
+        elif isinstance(data, pd.DataFrame):
+            # load from pandas DataFrame
+            if 'ROMol' in data.columns:
+                data = self._convert_numeric_columns(data)
+                
         elif isinstance(data, list) or isinstance(data, np.ndarray):
             # load from smiles list
-            data = pd.DataFrame(data, columns=['SMILES'])
+            data = pd.DataFrame(data, columns=smiles_col)
+
+        elif isinstance(data, pd.Series):
+            # load from smiles pandas Series
+            data = data.to_frame(name=smiles_col)
         else:
             raise ValueError('Unknown data type: {}'.format(type(data)))
 

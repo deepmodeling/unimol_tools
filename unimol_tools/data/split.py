@@ -78,6 +78,9 @@ class Splitter(object):
         if smiles is None and 'atoms' in params:
             smiles = params['atoms']
             logger.warning('Atoms are used as SMILES for splitting.')
+        if smiles is None and 'mols' in params:
+            smiles = params['mols']
+            logger.warning('Mols are used as SMILES for splitting.')
         if self.method in ['random']:
             self.skf = self.splitter.split(smiles)
         elif self.method in ['scaffold']:
