@@ -102,11 +102,6 @@ class DataHub(object):
                 no_h_list = ConformerGen(**params).transform_mols(self.data['mols'])
                 mols = None
             elif 'atoms' in self.data and 'coordinates' in self.data:
-                if not isinstance(self.data['atoms'][0], str):
-                    pt = Chem.GetPeriodicTable()
-                    self.data['atoms'] = [
-                        [pt.GetElementSymbol(int(atom)) for atom in atoms] for atoms in self.data['atoms']
-                    ]
                 no_h_list = ConformerGen(**params).transform_raw(
                     self.data['atoms'], self.data['coordinates']
                 )
@@ -119,11 +114,6 @@ class DataHub(object):
                 no_h_list = UniMolV2Feature(**params).transform_mols(self.data['mols'])
                 mols = None
             elif 'atoms' in self.data and 'coordinates' in self.data:
-                if not isinstance(self.data['atoms'][0], str):
-                    pt = Chem.GetPeriodicTable()
-                    self.data['atoms'] = [
-                        [pt.GetElementSymbol(int(atom)) for atom in atoms] for atoms in self.data['atoms']
-                    ]
                 no_h_list = UniMolV2Feature(**params).transform_raw(
                     self.data['atoms'], self.data['coordinates']
                 )

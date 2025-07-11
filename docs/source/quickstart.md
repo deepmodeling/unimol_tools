@@ -253,7 +253,7 @@ predictor = MolPredict(load_model='./exp_esol')
 y_pred = predictor.predict(data=test_data_path)
 ```
 
-It is also possible to use a list of atoms and a list of coordinates directly as input, with the column names **'atoms'** and **'coordinates'**. The smiles list is optional, but is required if scaffold is used as the grouping method.
+It is also possible to use a list of atoms and a list of coordinates directly as input, with the column names **'atoms'** and **'coordinates'**. The smiles list is optional, but is required if scaffold is used as the grouping method. Atoms list supports either atom type or atomic number input, for example, 'atoms':[['C', 'C'],['C', 'H', 'O']] or 'atoms':[[6, 6],[6, 1, 8]].
 
 ```python
 import numpy as np

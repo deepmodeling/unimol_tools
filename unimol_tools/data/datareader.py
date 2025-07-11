@@ -68,6 +68,17 @@ class MolDataReader(object):
                         data[target_col_prefix + str(i)] = label[:, i]
 
             _ = data.pop('target', None)
+            
+            if 'atoms' in data and 'coordinates' in data:
+                if not isinstance(data['atoms'][0], list) and not isinstance(data['atoms'][0], np.ndarray):
+                    data['atoms'] = [data['atoms']]
+                    data['coordinates'] = [data['coordinates']]
+                if not isinstance(data['atoms'][0][0], str):
+                    pt = Chem.GetPeriodicTable()
+                    data['atoms'] = [
+                        [pt.GetElementSymbol(int(atom)) for atom in atoms]
+                        for atoms in data['atoms']
+                    ]
             data = pd.DataFrame(data)
 
         elif isinstance(data, pd.DataFrame):
