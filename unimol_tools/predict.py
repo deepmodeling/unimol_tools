@@ -38,8 +38,11 @@ class MolPredict(object):
         """ 
         Predict molecular data.
 
-        :param data: str or pandas.DataFrame or dict of atoms and coordinates, input data for prediction. \
+        :param data: str, list, numpy, pandas.Series, pandas.DataFrame, dict of atoms and coordinates, input data for prediction.
             - str: path of csv file.
+            - list: list of smiles strings.
+            - numpy.ndarray: numpy array of data.
+            - pandas.Series: series of smiles strings.
             - pandas.DataFrame: dataframe of data.
             - dict: dict of atoms and coordinates, e.g. {'atoms': ['C', 'C', 'C'], 'coordinates': [[0, 0, 0], [0, 0, 1], [0, 0, 2]]}
         :param save_path: str, default=None, path to save predict result.

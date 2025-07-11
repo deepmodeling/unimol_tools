@@ -93,24 +93,28 @@ class UniMolRepr(object):
         """
         Get molecular representation by unimol.
 
-        :param data: str, dict, list or numpy, default=None, input data for unimol.
+        :param data: str, dict, list, numpy.ndarray, pandas.Series or pandas.Dataframe, default=None, input data for unimol.
 
             - str: smiles string or path to a smiles file.
 
-            - dict: custom conformers, should take atoms and coordinates as input.
+            - dict: custom conformers, could take atoms and coordinates as input.
 
             - list: list of smiles strings.
 
-            - numpy: numpy.ndarray of smiles strings
+            - numpy.ndarray: numpy.ndarray of smiles strings
+            
+            - pandas.Series: pandas Series of smiles strings.
+            
+            - pandas.DataFrame: pandas DataFrame of smiles strings or custom conformers.
 
         :param return_atomic_reprs: bool, default=False, whether to return atomic representations.
 
         :param return_tensor: bool, default=False, whether to return tensor representations. Only works when return_atomic_reprs=False.
 
         :return: 
-            if return_atomic_reprs=True: dict of molecular representation.
-            if return_atomic_reprs=False and return_tensor=False: list of molecular representation.
-            if return_atomic_reprs=False and return_tensor=True: tensor of molecular representation.
+            - if return_atomic_reprs=True: dict of molecular representation.
+            - if return_atomic_reprs=False and return_tensor=False: list of molecular representation.
+            - if return_atomic_reprs=False and return_tensor=True: tensor of molecular representation.
         """
 
         if isinstance(data, str):

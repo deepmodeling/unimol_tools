@@ -88,7 +88,7 @@ clf = MolTrain(task='classification',
                 batch_size=16, 
                 metrics='auc',
                 )
-pred = clf.fit(data = train_data)
+clf.fit(data = train_data)
 # currently support data with smiles based csv/txt file, and
 # custom dict of {'atoms':[['C','C'],['C','H','O']], 'coordinates':[coordinates_1,coordinates_2]}
 
