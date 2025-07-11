@@ -92,7 +92,7 @@ class MolDataReader(object):
                 
         elif isinstance(data, list) or isinstance(data, np.ndarray):
             # load from smiles list
-            data = pd.DataFrame(data, columns=smiles_col)
+            data = pd.DataFrame(data, columns=[smiles_col])
 
         elif isinstance(data, pd.Series):
             # load from smiles pandas Series
