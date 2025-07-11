@@ -79,6 +79,10 @@ class MolDataReader(object):
                         [pt.GetElementSymbol(int(atom)) for atom in atoms]
                         for atoms in data['atoms']
                     ]
+            if isinstance(data[smiles_col], str):
+                # if the smiles_col is a single string, convert it to a list
+                data[smiles_col] = [data[smiles_col]]
+                
             data = pd.DataFrame(data)
 
         elif isinstance(data, pd.DataFrame):
