@@ -161,7 +161,7 @@ class NNModel(object):
         assert isinstance(y, np.ndarray), 'y must be numpy array'
         if isinstance(X, np.ndarray):
             return torch.from_numpy(X[idx]).float(), torch.from_numpy(y[idx])
-        elif isinstance(X, list):
+        elif isinstance(X, dict):
             return {k: v[idx] for k, v in X.items()}, torch.from_numpy(y[idx])
         else:
             raise ValueError('X must be numpy array or dict')

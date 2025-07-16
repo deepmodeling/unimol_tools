@@ -59,7 +59,7 @@ class MolTrain(object):
         """
         Initialize a :class:`MolTrain` class.
 
-        :param task: str, default='classification', currently support [`]classification`, `regression`, `multiclass`, `multilabel_classification`, `multilabel_regression`.
+        :param task: str, default='classification', currently support [`classification`, `regression`, `multiclass`, `multilabel_classification`, `multilabel_regression`].
         :param data_type: str, default='molecule', currently support molecule, oled.
         :param epochs: int, default=10, number of epochs to train.
         :param learning_rate: float, default=1e-4, learning rate of optimizer.

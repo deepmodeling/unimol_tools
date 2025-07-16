@@ -182,3 +182,370 @@ To avoid this error, ensure that all code requiring multiprocessing is enclosed 
 export MASTER_ADDR='localhost'
 export MASTER_PORT='19198'
 ```
+
+## Simple examples of five tasks
+Currently unimol_tools supports five types of fine-tuning tasks: `classification`, `regression`, `multiclass`, `multilabel_classification`, `multilabel_regression`.
+
+The datasets used in the examples are all open source and available, including
+- Ames mutagenicity. The dataset includes 6512 compounds and corresponding binary labels from Ames Mutagenicity results.
+- ESOL (delaney) is a standard regression dataset containing structures and water solubility data for 1128 compounds.
+- Tox21 Data Challenge 2014 is designed to help scientists understand the potential of the chemicals and compounds being tested through the Toxicology in the 21st Century initiative to disrupt biological pathways in ways that may result in toxic effects, which includes 12 date sets. The official web site is https://tripod.nih.gov/tox21/challenge/
+- Solvation free energy (FreeSolv). SMILES are provided.
+- Vector-QM24 (VQM24) dataset. Quantum chemistry dataset of ~836 thousand small organic and inorganic molecules.
+
+### Example of classification
+You can use a dictionary as input. The default smiles column name is **'SMILES'** and the target column name is **'target'**. You can also customize it with `smiles_col` and `target_cols`.
+
+```Python
+import pandas as pd
+from unimol_tools import MolTrain, MolPredict
+
+# Load the dataset
+df = pd.read_csv('../datasets/Ames/Ames.csv')
+
+df = df.drop(columns=['CAS_NO']).rename(columns={'Activity': 'target'})
+
+# Divide the training set and test set
+train_df = df.sample(frac=0.8, random_state=42)
+test_df = df.drop(train_df.index)
+
+train_df_dict = train_df.to_dict(orient='list')
+test_df_dict = test_df.to_dict(orient='list')
+
+clf = MolTrain(task='classification', 
+                data_type='molecule', 
+                epochs=20, 
+                batch_size=16, 
+                metrics='auc',
+                smiles_col='Canonical_Smiles',
+                )
+
+clf.fit(train_df_dict)
+
+predictor = MolPredict(load_model='./exp')
+
+pred = predictor.predict(test_df_dict['Canonical_Smiles'])
+```
+
+### Example of regression
+You can directly use the csv file path as input. The default recognized smiles column name is **'SMILES'** and the target column name is **'TARGET'**. The column names can be customized by `smiles_col` and `target_cols`.
+
+```python
+from unimol_tools import MolTrain, MolPredict
+
+# Load the dataset
+train_data_path = '../datasets/ESol/train_data.csv'
+test_data_path = '../datasets/ESol/test_data.csv'
+
+reg = MolTrain(task='regression',
+                data_type='molecule',
+                epochs=20,
+                batch_size=32,
+                metrics='mae',
+                smiles_col='smiles',
+                target_cols=['ESOL predicted log solubility in mols per litre'],
+                save_path='./exp_esol',
+                )
+
+reg.fit(train_data_path)
+
+predictor = MolPredict(load_model='./exp_esol')
+y_pred = predictor.predict(data=test_data_path)
+```
+
+It is also possible to use a list of atoms and a list of coordinates directly as input, with the column names **'atoms'** and **'coordinates'**. The smiles list is optional, but is required if scaffold is used as the grouping method. Atoms list supports either atom type or atomic number input, for example, 'atoms':[['C', 'C'],['C', 'H', 'O']] or 'atoms':[[6, 6],[6, 1, 8]].
+
+```python
+import numpy as np
+from unimol_tools import MolTrain, MolPredict
+from rdkit import Chem
+
+# Load the dataset
+data = np.load('../datasets/DMC.npz', allow_pickle=True)
+atoms_all = data['atoms']
+coordinates_all = data['coordinates']
+smiles_all = data['graphs']
+all_targets = data['Etot']
+
+# Filter illegal smiles data
+valid_smiles = []
+valid_atoms = []
+valid_coordinates = []
+valid_targets = []
+for smiles, target, atoms, coordinates in zip(smiles_all, all_targets, atoms_all, coordinates_all):
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is not None:
+            valid_smiles.append(smiles)
+            valid_atoms.append(atoms)
+            valid_coordinates.append(coordinates)
+            valid_targets.append(target)
+    except Exception as e:
+        print(f"Invalid SMILES: {smiles}, Error: {e}")
+
+# Divide the training set and test set
+num_molecules = len(valid_smiles)
+np.random.seed(42)
+indices = np.random.permutation(num_molecules)
+train_end = int(0.8 * num_molecules)
+train_val_idx = indices[:train_end]
+test_idx  = indices[train_end:]
+
+train_val_smiles  = [valid_smiles[i] for i in train_val_idx]
+test_smiles = [valid_smiles[i] for i in test_idx]
+train_val_atoms = [valid_atoms[i] for i in train_val_idx]
+test_atoms = [valid_atoms[i] for i in test_idx]
+train_val_coordinates = [valid_coordinates[i] for i in train_val_idx]
+test_coordinates = [valid_coordinates[i] for i in test_idx]
+
+train_val_targets = [valid_targets[i] for i in train_val_idx]
+test_targets = [valid_targets[i] for i in test_idx]
+
+train_val_data = {
+    'target': train_val_targets,
+    'atoms': train_val_atoms,
+    'coordinates': train_val_coordinates,
+    'SMILES':  train_val_smiles,
+}
+test_data = {
+    'SMILES': test_smiles,
+    'atoms': test_atoms,
+    'coordinates': test_coordinates,
+}
+
+reg = MolTrain(task='regression',
+                data_type='molecule',
+                epochs=20,
+                batch_size=32,
+                metrics='mae',
+                save_path='./exp',
+                )
+
+reg.fit(train_val_data)
+
+predictor = MolPredict(load_model='./exp')
+y_pred = predictor.predict(data=test_data, save_path='./pre') # Specify save_path to store prediction results
+```
+
+### Example of multiclass
+
+```python
+import pandas as pd
+from unimol_tools import MolTrain, MolPredict
+import numpy as np
+
+# Load the dataset
+df = pd.read_csv('../datasets/ESOL/ESOL.csv')
+
+data_dict = {
+    'SMILES': df['smiles'].tolist(),
+    'target': df['Number of H-Bond Donors'].tolist()
+}
+
+data_dict['SMILES'] = [smiles for i, smiles in enumerate(data_dict['SMILES']) if data_dict['target'][i] <= 4]
+data_dict['target'] = [target for target in data_dict['target'] if target <= 4]
+
+# Divide the training set and test set
+num_molecules = len(data_dict['SMILES'])
+np.random.seed(42)
+indices = np.random.permutation(num_molecules)
+train_end = int(0.8 * num_molecules)
+train_val_idx = indices[:train_end]
+test_idx  = indices[train_end:]
+
+train_val_dict = {
+    'SMILES': [data_dict['SMILES'][i] for i in train_val_idx],
+    'target': [data_dict['target'][i] for i in train_val_idx],
+}
+test_dict = {
+    'SMILES': [data_dict['SMILES'][i] for i in test_idx],
+    'target': [data_dict['target'][i] for i in test_idx],
+}
+
+mclf = MolTrain(task='multiclass',
+                data_type='molecule',
+                epochs=20,
+                batch_size=32,
+                metrics='acc',
+                save_path='./exp',
+                )
+
+mclf.fit(train_val_dict)
+
+predictor = MolPredict(load_model='./exp')
+y_pred = predictor.predict(data=test_dict)
+```
+
+### Example of multilabel_classification
+
+```python
+import pandas as pd
+from unimol_tools import MolTrain, MolPredict
+
+# Load the dataset
+df = pd.read_csv('../datasets/tox21.csv')
+
+# Fill missing values ​​with 0
+df.fillna(0, inplace=True)
+
+df.drop(columns=['mol_id'], inplace=True)
+
+# Divide the training set and test set
+train_df = df.sample(frac=0.8, random_state=42)
+test_df = df.drop(train_df.index)
+
+train_df_dict = train_df.to_dict(orient='list')
+test_df_dict = test_df.to_dict(orient='list')
+
+mlclf = MolTrain(task='multilabel_classification',
+                    data_type='molecule',
+                    epochs=20,
+                    batch_size=32,
+                    metrics='auc',
+                    smiles_col='smiles',
+                    target_cols=[col for col in df.columns if col != 'smiles'],
+                    )
+mlclf.fit(train_df_dict)
+
+predictor = MolPredict(load_model='./exp')
+pred = predictor.predict(test_df_dict['smiles'])
+```
+
+It also supports directly using the sdf file path as input.
+
+```python
+from unimol_tools import MolTrain, MolPredict
+from rdkit.Chem import PandasTools
+
+# Load the dataset
+data_path = '../datasets/tox21.sdf'
+
+data = PandasTools.LoadSDF(data_path)
+
+# Fill missing values ​​with 0
+data['SR-HSE'] = data['SR-HSE'].fillna(0)
+data['NR-AR'] = data['NR-AR'].fillna(0)
+
+mlclf = MolTrain(task='multilabel_classification',
+                    data_type='molecule',
+                    epochs=20,
+                    batch_size=32,
+                    metrics='auc',
+                    target_cols=['SR-HSE', 'NR-AR'],
+                    save_path='./exp_sdf',
+                    )
+mlclf.fit(data)
+```
+
+### Example of multilabel_regression
+
+```python
+from unimol_tools import MolTrain, MolPredict
+
+# Load the dataset
+data_path = '../datasets/FreeSolv/SAMPL.csv'
+
+mreg = MolTrain(task='multilabel_regression',
+                data_type='molecule',
+                epochs=20,
+                batch_size=32,
+                metrics='mae',
+                smiles_col='smiles',
+                target_cols='expt,calc',
+                save_path='./exp_csv',
+                )
+
+mreg.fit(data_path)
+```
+
+```python
+from unimol_tools import MolTrain, MolPredict
+import pandas as pd
+import numpy as np
+
+# Load the dataset
+df = pd.read_csv('../datasets/FreeSolv/SAMPL.csv')
+
+data_dict = {
+    'SMILES': df['smiles'].tolist(),
+    'target': [df['expt'].tolist(), df['calc'].tolist()]
+}
+
+# Divide the training set and test set
+num_molecules = len(data_dict['SMILES'])
+np.random.seed(42)
+indices = np.random.permutation(num_molecules)
+train_end = int(0.8 * num_molecules)
+train_val_idx = indices[:train_end]
+test_idx  = indices[train_end:]
+
+train_val_dict = {
+    'SMILES': [data_dict['SMILES'][i] for i in train_val_idx],
+    'target': [data_dict['target'][0][i] for i in train_val_idx],
+}
+test_dict = {
+    'SMILES': [data_dict['SMILES'][i] for i in test_idx],
+    'target': [data_dict['target'][0][i] for i in test_idx],
+}
+
+mreg = MolTrain(task='multilabel_regression',
+                data_type='molecule',
+                epochs=20,
+                batch_size=32,
+                metrics='mae',
+                save_path='./exp_dict',
+                )
+
+mreg.fit(train_val_dict)
+
+predictor = MolPredict(load_model='./exp_dict')
+y_pred = predictor.predict(data=test_dict)
+```
+
+```python
+from unimol_tools import MolTrain, MolPredict
+import pandas as pd
+import numpy as np
+
+# Load the dataset
+df = pd.read_csv('../datasets/FreeSolv/SAMPL.csv')
+
+data_dict = {
+    'SMILES': df['smiles'].tolist(),
+    'expt': df['expt'].tolist(),
+    'calc': df['calc'].tolist()
+}
+
+# Divide the training set and test set
+num_molecules = len(data_dict['SMILES'])
+np.random.seed(42)
+indices = np.random.permutation(num_molecules)
+train_end = int(0.8 * num_molecules)
+train_val_idx = indices[:train_end]
+test_idx  = indices[train_end:]
+
+train_val_dict = {
+    'SMILES': [data_dict['SMILES'][i] for i in train_val_idx],
+    'expt': [data_dict['expt'][i] for i in train_val_idx],
+    'calc': [data_dict['calc'][i] for i in train_val_idx],
+}
+test_dict = {
+    'SMILES': [data_dict['SMILES'][i] for i in test_idx],
+    'expt': [data_dict['expt'][i] for i in test_idx],
+    'calc': [data_dict['calc'][i] for i in test_idx],
+}
+
+mreg = MolTrain(task='multilabel_regression',
+                data_type='molecule',
+                epochs=20,
+                batch_size=32,
+                metrics='mae',
+                target_cols=['expt', 'calc'],
+                save_path='./exp_dict',
+                )
+
+mreg.fit(train_val_dict)
+
+predictor = MolPredict(load_model='./exp_dict')
+y_pred = predictor.predict(data=test_dict, save_path='./pre_dict')
+```

@@ -13,7 +13,7 @@ from .base_logger import logger
 
 
 class YamlHandler:
-    '''A clss to read and write the yaml file'''
+    '''A class to read and write the yaml file'''
 
     def __init__(self, file_path):
         """

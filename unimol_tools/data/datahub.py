@@ -6,6 +6,7 @@ from __future__ import absolute_import, division, print_function
 
 import os
 import numpy as np
+import pandas as pd
 from rdkit.Chem import PandasTools
 
 from ..utils import logger
@@ -35,7 +36,7 @@ class DataHub(object):
         self.is_train = is_train
         self.save_path = save_path
         self.task = params.get('task', None)
-        self.target_cols = params.get('target_cols', None)
+        # self.target_cols = params.get('target_cols', None)
         self.multiclass_cnt = params.get('multiclass_cnt', None)
         self.ss_method = params.get('target_normalize', 'none')
         self.conf_cache_level = params.get('conf_cache_level', 1)
@@ -159,11 +160,16 @@ class DataHub(object):
         """
         if isinstance(self.raw_data, str):
             base_name = os.path.splitext(os.path.basename(self.raw_data))[0]
-        elif isinstance(self.raw_data, list) or isinstance(self.raw_data, np.ndarray):
+        elif isinstance(self.raw_data, list) or isinstance(self.raw_data, np.ndarray) or isinstance(self.raw_data, pd.Series):
             # If the raw_data is a list of smiles, we can use a default name.
             base_name = 'unimol_conformers'
+        elif isinstance(self.raw_data, pd.DataFrame) or isinstance(self.raw_data, dict):
+            if self.is_train:
+                base_name = 'unimol_conformers_train'
+            else:
+                base_name = 'unimol_conformers'
         else:
-            logger.warning('Warning: raw_data is not a path or list, cannot save sdf.')
+            logger.warning('Warning: raw_data is not a path or list of smiles, cannot save sdf.')
             return
         if params.get('sdf_save_path') is None:
             if self.save_path is not None:

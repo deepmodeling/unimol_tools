@@ -70,7 +70,7 @@ class Trainer(object):
 
         if torch.cuda.is_available() and self.cuda:
             if self.amp:
-                self.scaler = torch.cuda.amp.GradScaler()
+                self.scaler = torch.amp.GradScaler("cuda")
             else:
                 self.scaler = None
             self.device = torch.device("cuda")
