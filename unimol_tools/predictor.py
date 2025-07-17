@@ -42,6 +42,7 @@ class UniMolRepr(object):
         remove_hs=False,
         model_name='unimolv1',
         model_size='84m',
+        smiles_col='SMILES',
         use_cuda=True,
         use_ddp=False,
         use_gpu='all',
@@ -56,6 +57,7 @@ class UniMolRepr(object):
         :param remove_hs: bool, default=False, whether to remove hydrogens in molecular.
         :param model_name: str, default='unimolv1', currently support unimolv1, unimolv2.
         :param model_size: str, default='84m', model size of unimolv2. Avaliable: 84m, 164m, 310m, 570m, 1.1B.
+        :param smiles_col: str, default='SMILES', column name of SMILES.
         :param use_cuda: bool, default=True, whether to use gpu.
         :param use_ddp: bool, default=False, whether to use distributed data parallel.
         :param use_gpu: str, default='all', which gpu to use.
@@ -80,49 +82,63 @@ class UniMolRepr(object):
             'remove_hs': remove_hs,
             'model_name': model_name,
             'model_size': model_size,
+            'smiles_col': smiles_col,
             'use_cuda': use_cuda,
             'use_ddp': use_ddp,
             'use_gpu': use_gpu,
             'save_path': save_path,
         }
 
-    def get_repr(self, data=None, return_atomic_reprs=False):
+    def get_repr(self, data=None, return_atomic_reprs=False, return_tensor=False):
         """
         Get molecular representation by unimol.
 
-        :param data: str, dict or list, default=None, input data for unimol.
+        :param data: str, dict, list, numpy.ndarray, pandas.Series or pandas.Dataframe, default=None, input data for unimol.
 
             - str: smiles string or path to a smiles file.
 
-            - dict: custom conformers, should take atoms and coordinates as input.
+            - dict: custom conformers, could take atoms and coordinates as input.
 
             - list: list of smiles strings.
 
+            - numpy.ndarray: numpy.ndarray of smiles strings
+            
+            - pandas.Series: pandas Series of smiles strings.
+            
+            - pandas.DataFrame: pandas DataFrame of smiles strings or custom conformers.
+
         :param return_atomic_reprs: bool, default=False, whether to return atomic representations.
 
-        :return: dict of molecular representation.
+        :param return_tensor: bool, default=False, whether to return tensor representations. Only works when return_atomic_reprs=False.
+
+        :return: 
+            - if return_atomic_reprs=True: dict of molecular representation.
+            - if return_atomic_reprs=False and return_tensor=False: list of molecular representation.
+            - if return_atomic_reprs=False and return_tensor=True: tensor of molecular representation.
         """
 
         if isinstance(data, str):
-            if data.endswith('.sdf'):
-                # Datahub will process sdf file.
+            if data.endswith('.sdf') or data.endswith('.csv'):
+                # Datahub will process sdf and csv file.
                 pass
-            elif data.endswith('.csv'):
-                # read csv file.
-                data = pd.read_csv(data)
-                assert 'SMILES' in data.columns
-                data = data['SMILES'].values
             else:
                 # single smiles string.
                 data = [data]
-                data = np.array(data)
         elif isinstance(data, dict):
             # custom conformers, should take atoms and coordinates as input.
-            assert 'atoms' in data and 'coordinates' in data
-        elif isinstance(data, list):
+            if self.params['smiles_col'] not in data:
+                assert 'atoms' in data and 'coordinates' in data
+            else:
+                assert isinstance(data[self.params['smiles_col']][-1], str)
+        elif isinstance(data, list) or isinstance(data, np.ndarray) or isinstance(data, pd.Series):
             # list of smiles strings.
-            assert isinstance(data[-1], str)
-            data = np.array(data)
+            assert isinstance(data[0], str)
+        elif isinstance(data, pd.DataFrame):
+            # pandas DataFrame of smiles strings.
+            if self.params['smiles_col'] not in data.columns:
+                assert 'atoms' in data.columns and 'coordinates' in data.columns
+            else:
+                assert isinstance(data[self.params['smiles_col']].iloc[0], str)
         else:
             raise ValueError('Unknown data type: {}'.format(type(data)))
 
@@ -136,8 +152,10 @@ class UniMolRepr(object):
         self.trainer = Trainer(task='repr', **self.params)
         repr_output = self.trainer.inference(
             self.model,
+            model_name=self.params['model_name'],
             return_repr=True,
             return_atomic_reprs=return_atomic_reprs,
             dataset=dataset,
+            return_tensor=return_tensor,
         )
         return repr_output

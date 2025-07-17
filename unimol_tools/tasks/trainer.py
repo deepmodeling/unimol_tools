@@ -70,7 +70,7 @@ class Trainer(object):
 
         if torch.cuda.is_available() and self.cuda:
             if self.amp:
-                self.scaler = torch.cuda.amp.GradScaler()
+                self.scaler = torch.amp.GradScaler("cuda")
             else:
                 self.scaler = None
             self.device = torch.device("cuda")
@@ -656,9 +656,11 @@ class Trainer(object):
         self,
         model,
         dataset,
+        model_name,
         return_repr=False,
         return_atomic_reprs=False,
         feature_name=None,
+        return_tensor=False,
     ):
         """
         Runs inference on the given dataset using the provided model. This method can return
@@ -666,9 +668,11 @@ class Trainer(object):
 
         :param model: The neural network model to be used for inference.
         :param dataset: The dataset on which inference is to be performed.
+        :param model_name: The name of neural network model.
         :param return_repr: (bool, optional) If True, returns class-level representations. Defaults to False.
         :param return_atomic_reprs: (bool, optional) If True, returns atomic-level representations. Defaults to False.
         :param feature_name: (str, optional) Name of the feature used for data loading. Defaults to None.
+        :param return_tensor: (str, optional) If True, returns tensor representations, only works when return_atomic_reprs=False. Defaults to False.
 
         :return: A dictionary containing different types of representations based on the model's output and the
                  specified parameters. This can include class-level representations, atomic coordinates,
@@ -683,20 +687,22 @@ class Trainer(object):
                         shared_queue,
                         model,
                         dataset,
+                        model_name,
                         return_repr,
                         return_atomic_reprs,
                         feature_name,
+                        return_tensor,
                     ),
                     nprocs=torch.cuda.device_count(),
                 )
                 try:
-                    repr_dict = shared_queue.get(timeout=1)
+                    repr_ = shared_queue.get(timeout=1)
                 except:
                     print("No return value received from main function.")
-                return repr_dict
+                return repr_
         else:
             return self.inference_without_ddp(
-                model, dataset, return_repr, return_atomic_reprs, feature_name
+                model, dataset, model_name, return_repr, return_atomic_reprs, feature_name, return_tensor
             )
 
     def inference_with_ddp(
@@ -705,9 +711,11 @@ class Trainer(object):
         shared_queue,
         model,
         dataset,
+        model_name,
         return_repr=False,
         return_atomic_reprs=False,
         feature_name=None,
+        return_tensor=False,
     ):
         """
         Runs inference on the given dataset using the provided model with DistributedDataParallel (DDP).
@@ -716,9 +724,11 @@ class Trainer(object):
         :param shared_queue: A shared queue to store the inference results.
         :param model: The neural network model to be used for inference.
         :param dataset: The dataset on which inference is to be performed.
+        :param model_name: The name of neural network model.
         :param return_repr: (bool, optional) If True, returns class-level representations. Defaults to False.
         :param return_atomic_reprs: (bool, optional) If True, returns atomic-level representations. Defaults to False.
         :param feature_name: (str, optional) Name of the feature used for data loading. Defaults to None.
+        :param return_tensor: (str, optional) If True, returns tensor representations, only works when return_atomic_reprs=False. Defaults to False.
 
         :return: A dictionary containing different types of representations based on the model's output and the
                  specified parameters. This can include class-level representations, atomic coordinates,
@@ -738,74 +748,159 @@ class Trainer(object):
             distributed=True,
         )
         model = model.eval()
-        repr_dict = {
-            "cls_repr": [],
-            "atomic_coords": [],
-            "atomic_reprs": [],
-            "atomic_symbol": [],
-        }
-        for batch in tqdm(dataloader):
-            net_input, _ = self.decorate_batch(batch, feature_name)
-            with torch.no_grad():
-                outputs = model(
-                    **net_input,
-                    return_repr=return_repr,
-                    return_atomic_reprs=return_atomic_reprs,
-                )
+        if return_atomic_reprs:
+            repr_dict = {
+                "cls_repr": [],
+                "atomic_coords": [],
+                "atomic_reprs": [],
+                "atomic_symbol": [],
+            }
+            for batch in tqdm(dataloader):
+                net_input, _ = self.decorate_batch(batch, feature_name)
+                with torch.no_grad():
+                    outputs = model(
+                        **net_input,
+                        return_repr=return_repr,
+                        return_atomic_reprs=return_atomic_reprs,
+                    )
 
                 assert isinstance(outputs, dict)
                 repr_dict["cls_repr"].extend(
                     item.cpu().numpy() for item in outputs["cls_repr"]
-                )
-                if return_atomic_reprs:
-                    repr_dict["atomic_symbol"].extend(outputs["atomic_symbol"])
-                    repr_dict['atomic_coords'].extend(
-                        item.cpu().numpy() for item in outputs['atomic_coords']
                     )
-                    repr_dict['atomic_reprs'].extend(
-                        item.cpu().numpy() for item in outputs['atomic_reprs']
+                if model_name == 'unimolv1':
+                    repr_dict["atomic_symbol"].extend(
+                        outputs["atomic_symbol"]
                     )
-        gathered_list = [{} for _ in range(dist.get_world_size())]
-        dist.gather_object(repr_dict, gathered_list if local_rank == 0 else None, dst=0)
-        dist.destroy_process_group()
-        if local_rank == 0:
-            merged_repr_dict = {"cls_repr": []}
-            if return_atomic_reprs:
-                merged_repr_dict.update(
-                    {"atomic_symbol": [], "atomic_coords": [], "atomic_reprs": []}
+                elif model_name == 'unimolv2':
+                    repr_dict["atomic_symbol"].extend(
+                        item.cpu().numpy() for item in outputs["atomic_symbol"]
+                        )
+                repr_dict['atomic_coords'].extend(
+                    item.cpu().numpy() for item in outputs['atomic_coords']
+                    )
+                repr_dict['atomic_reprs'].extend(
+                    item.cpu().numpy() for item in outputs['atomic_reprs']
+                    )
+
+            world_size = dist.get_world_size()
+            gathered_list = [{} for _ in range(world_size)]
+            dist.gather_object(repr_dict, gathered_list if local_rank == 0 else None, dst=0)
+            dist.destroy_process_group()
+            
+            if local_rank == 0:
+                merged_repr_dict = {
+                    "cls_repr": [],
+                    'atomic_coords': [],
+                    "atomic_reprs": [],
+                    "atomic_symbol": [],
+                    }
+
+                max_local = max(len(rd["cls_repr"]) for rd in gathered_list)
+                total = len(dataset)
+
+                for i in range(max_local):
+                    for r in range(world_size):
+                        global_idx = i * world_size + r
+                        if global_idx >= total:
+                            continue
+                        rd = gathered_list[r]
+                        if i < len(rd["cls_repr"]):
+                            merged_repr_dict["cls_repr"].append(rd["cls_repr"][i])
+                            merged_repr_dict["atomic_symbol"].append(
+                                rd["atomic_symbol"][i]
+                            )
+                            merged_repr_dict["atomic_coords"].append(
+                                rd["atomic_coords"][i]
+                            )
+                            merged_repr_dict["atomic_reprs"].append(
+                                rd["atomic_reprs"][i]
+                            )
+                shared_queue.put(merged_repr_dict)
+            return
+        else:
+            if return_tensor:
+                repr_tensor = []
+                for batch in tqdm(dataloader):
+                    net_input, _ = self.decorate_batch(batch, feature_name)
+                    with torch.no_grad():
+                        outputs = model(
+                            **net_input,
+                            return_repr=return_repr,
+                            return_atomic_reprs=return_atomic_reprs,
+                        )
+                    assert isinstance(outputs, torch.Tensor)
+                    repr_tensor.append(outputs.cpu().numpy())
+                repr_tensor = np.concatenate(repr_tensor, axis=0)
+                
+                gathered_list = [None for _ in range(dist.get_world_size())]
+                dist.gather_object(
+                    repr_tensor, gathered_list if local_rank == 0 else None, dst=0
                 )
+                dist.destroy_process_group()
+                
+                if local_rank == 0:
+                    merged_numpy = np.stack(gathered_list, axis=1).reshape(-1, repr_tensor.shape[-1])
+                    merged_numpy = merged_numpy[: len(dataset)]
+                    merged_tensor = torch.from_numpy(merged_numpy)
+                    shared_queue.put(merged_tensor)
+                return
+            else:
+                repr_list = []
+                for batch in tqdm(dataloader):
+                    net_input, _ = self.decorate_batch(batch, feature_name)
+                    with torch.no_grad():
+                        outputs = model(
+                            **net_input,
+                            return_repr=return_repr,
+                            return_atomic_reprs=return_atomic_reprs,
+                        )
+                    assert isinstance(outputs, torch.Tensor)
+                    repr_list.extend(item.cpu().numpy() for item in outputs)
 
-            for rd in gathered_list:
-                merged_repr_dict["cls_repr"].extend(rd["cls_repr"])
-                if return_atomic_reprs:
-                    merged_repr_dict["atomic_symbol"].extend(rd.get("atomic_symbol", []))
-                    merged_repr_dict["atomic_coords"].extend(rd.get("atomic_coords", []))
-                    merged_repr_dict["atomic_reprs"].extend(rd.get("atomic_reprs", []))
-
-            merged_repr_dict["cls_repr"] = merged_repr_dict["cls_repr"][: len(dataset)]
-            if return_atomic_reprs:
-                for key in ["atomic_symbol", "atomic_coords", "atomic_reprs"]:
-                    merged_repr_dict[key] = merged_repr_dict[key][: len(dataset)]
-
-            shared_queue.put(merged_repr_dict)
-        return repr_dict
+                world_size = dist.get_world_size()
+                gathered_list = [None for _ in range(world_size)]
+                dist.gather_object(
+                    repr_list, gathered_list if local_rank == 0 else None, dst=0
+                )
+                dist.destroy_process_group()
+                if local_rank == 0:
+                    merged_list = []
+                    
+                    max_local = max(len(rl) for rl in gathered_list)
+                    total = len(dataset)
+                    for i in range(max_local):
+                        for r in range(world_size):
+                            global_idx = i * world_size + r
+                            if global_idx >= total:
+                                continue
+                            rl = gathered_list[r]
+                            if i < len(rl):
+                                merged_list.append(rl[i])
+                    merged_list = merged_list[: len(dataset)]
+                    shared_queue.put(merged_list)
+                return
 
     def inference_without_ddp(
         self,
         model,
         dataset,
+        model_name,
         return_repr=False,
         return_atomic_reprs=False,
         feature_name=None,
+        return_tensor=False,
     ):
         """
         Runs inference on the given dataset using the provided model without DistributedDataParallel (DDP).
 
         :param model: The neural network model to be used for inference.
         :param dataset: The dataset on which inference is to be performed.
+        :param model_name: The name of neural network model.
         :param return_repr: (bool, optional) If True, returns class-level representations. Defaults to False.
         :param return_atomic_reprs: (bool, optional) If True, returns atomic-level representations. Defaults to False.
         :param feature_name: (str, optional) Name of the feature used for data loading. Defaults to None.
+        :param return_tensor: (str, optional) If True, returns tensor representations, only works when return_atomic_reprs=False. Defaults to False.
 
         :return: A dictionary containing different types of representations based on the model's output and the
                  specified parameters. This can include class-level representations, atomic coordinates,
@@ -821,34 +916,69 @@ class Trainer(object):
             distributed=False,
         )
         model = model.eval()
-        repr_dict = {
-            "cls_repr": [],
-            "atomic_coords": [],
-            "atomic_reprs": [],
-            "atomic_symbol": [],
-        }
-        for batch in tqdm(dataloader):
-            net_input, _ = self.decorate_batch(batch, feature_name)
-            with torch.no_grad():
-                outputs = model(
-                    **net_input,
-                    return_repr=return_repr,
-                    return_atomic_reprs=return_atomic_reprs,
-                )
+        if return_atomic_reprs:
+            repr_dict = {
+                "cls_repr": [],
+                "atomic_coords": [],
+                "atomic_reprs": [],
+                "atomic_symbol": [],
+            }
+            for batch in tqdm(dataloader):
+                net_input, _ = self.decorate_batch(batch, feature_name)
+                with torch.no_grad():
+                    outputs = model(
+                        **net_input,
+                        return_repr=return_repr,
+                        return_atomic_reprs=return_atomic_reprs,
+                    )
                 assert isinstance(outputs, dict)
                 repr_dict["cls_repr"].extend(
                     item.cpu().numpy() for item in outputs["cls_repr"]
                 )
-                if return_atomic_reprs:
+                if model_name == 'unimolv1':
                     repr_dict["atomic_symbol"].extend(outputs["atomic_symbol"])
-                    repr_dict['atomic_coords'].extend(
-                        item.cpu().numpy() for item in outputs['atomic_coords']
+                elif model_name == 'unimolv2':
+                    repr_dict["atomic_symbol"].extend(
+                        item.cpu().numpy() for item in outputs["atomic_symbol"]
                     )
-                    repr_dict['atomic_reprs'].extend(
-                        item.cpu().numpy() for item in outputs['atomic_reprs']
+                repr_dict["atomic_coords"].extend(
+                    item.cpu().numpy() for item in outputs['atomic_coords']
+                )
+                repr_dict["atomic_reprs"].extend(
+                    item.cpu().numpy() for item in outputs['atomic_reprs']
+                )
+            return repr_dict
+        else:
+            if return_tensor:
+                repr_tensor = []
+                for batch in tqdm(dataloader):
+                    net_input, _ = self.decorate_batch(batch, feature_name)
+                    with torch.no_grad():
+                        outputs = model(
+                            **net_input,
+                            return_repr=return_repr,
+                            return_atomic_reprs=return_atomic_reprs,
+                        )
+                    assert isinstance(outputs, torch.Tensor)
+                    repr_tensor.append(outputs.cpu().numpy())
+                repr_tensor = np.concatenate(repr_tensor, axis=0)
+                repr_tensor = torch.from_numpy(repr_tensor)
+                return repr_tensor
+            else:
+                repr_list = []
+                for batch in tqdm(dataloader):
+                    net_input, _ = self.decorate_batch(batch, feature_name)
+                    with torch.no_grad():
+                        outputs = model(
+                            **net_input,
+                            return_repr=return_repr,
+                            return_atomic_reprs=return_atomic_reprs,
+                        )
+                    assert isinstance(outputs, torch.Tensor)
+                    repr_list.extend(
+                        item.cpu().numpy() for item in outputs
                     )
-
-        return repr_dict
+                return repr_list
 
     def set_seed(self, seed):
         """
