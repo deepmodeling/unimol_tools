@@ -1,10 +1,12 @@
 import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from ..models.transformers import TransformerEncoderWithPair, get_activation_fn
-from ..utils import logger, pad_1d_tokens, pad_2d, pad_coords
+from ..utils import pad_1d_tokens, pad_2d, pad_coords
+
 
 class UniMolModel(nn.Module):
     def __init__(self, config, dictionary):
@@ -119,7 +121,6 @@ class UniMolModel(nn.Module):
         )   
     
     def batch_collate_fn(self, batch):
-        print(random.getstate()[1][:3])
         net_input = {
             'src_tokens': pad_1d_tokens([item[0]['src_tokens'] for item in batch], self.padding_idx),
             'src_coord': pad_coords([item[0]['src_coord'] for item in batch], pad_idx=0.0),

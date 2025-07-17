@@ -1,28 +1,24 @@
-import hydra
-from omegaconf import DictConfig, OmegaConf
-
 import os
 import random
+
+import hydra
 import numpy as np
 import torch
+from omegaconf import DictConfig, OmegaConf
 
-from unimol_tools.pretrain import (
-    LMDBDataset,
-    UniMolModel,
-    UniMolDataset,
-    build_dictionary,
-    UniMolloss,
-    UniMolPretrainTrainer,
-)
+from unimol_tools.pretrain import (LMDBDataset, UniMolDataset, UniMolloss,
+                                   UniMolModel, UniMolPretrainTrainer,
+                                   build_dictionary)
+
 
 class MolPretrain:
     def __init__(self, cfg: DictConfig):
-        # 读取配置
+        # Read configuration
         self.config = cfg
         self.local_rank = getattr(self.config.training, 'local_rank', 0)
         seed = getattr(self.config.training, 'seed', 42)
         self.set_seed(seed)
-        # 构建字典
+        # Build dictionary
         dict_path = self.config.dataset.get('dict_path', None)
         if dict_path:
             from unimol_tools.data.dictionary import Dictionary
@@ -30,7 +26,7 @@ class MolPretrain:
         else:
             self.dictionary = build_dictionary(self.config.dataset.train_lmdb)
 
-        # 构建数据集
+        # Build dataset
         lmdb_dataset = LMDBDataset(self.config.dataset.train_lmdb)
         self.dataset = UniMolDataset(
             lmdb_dataset,
@@ -46,9 +42,9 @@ class MolPretrain:
         )
 
     def pretrain(self):
-        # 构建模型
+        # Build model
         model = UniMolModel(self.config.model, dictionary=self.dictionary)
-        # 构建损失
+        # Build loss function
         loss_fn = UniMolloss(
             self.dictionary,
             masked_token_loss=self.config.model.masked_token_loss,
@@ -57,16 +53,17 @@ class MolPretrain:
             x_norm_loss=self.config.model.x_norm_loss,
             delta_pair_repr_norm_loss=self.config.model.delta_pair_repr_norm_loss,
         )
-        # 构建trainer
+        # Build trainer
         trainer = UniMolPretrainTrainer(
             model,
             self.dataset,
             loss_fn,
             self.config.training,
             local_rank=self.local_rank,
+            resume=self.config.training.get('resume', None)
         )
         trainer.train(epochs=self.config.training.epochs)
-        # 保存模型
+        # Save model
         trainer.save('unimol_pretrain.pth')
 
     def set_seed(self, seed):

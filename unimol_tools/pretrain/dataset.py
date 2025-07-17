@@ -1,18 +1,15 @@
-from functools import lru_cache
-import os
-import random
 import pickle
-import lmdb
-from tqdm import tqdm
-import numpy as np
-import pandas as pd
+from functools import lru_cache
 
+import lmdb
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+
 class LMDBDataset(Dataset):
     """
-    读取LMDB，输出 idx、元素种类、原子序数、3D坐标，支持缓存
+    Read LMDB and output idx, element types, atomic numbers, and 3D coordinates. Supports caching.
     """
     def __init__(self, lmdb_path):
         env = lmdb.open(
@@ -48,7 +45,7 @@ class LMDBDataset(Dataset):
 
 class UniMolDataset(Dataset):
     """
-    Loads LMDBdataset for UniMol models.
+    Loads LMDBDataset for UniMol models.
     """
     def __init__(self, lmdb_dataset, dictionary, remove_hs=False, max_atoms=256, seed=1, **params):
         self.dataset = lmdb_dataset
@@ -74,7 +71,6 @@ class UniMolDataset(Dataset):
 
 
     def __getitem__(self, idx):
-        # print("dataset worker random state", random.getstate()[1][:3])
         return self.__getitem__cached__(self.epoch, idx)
     
     @lru_cache(maxsize=16)
@@ -122,7 +118,7 @@ def coords2unimol(
     np.random.seed(seed + epoch)
     torch.manual_seed(seed + epoch)
 
-    assert len(atoms) == len(coordinates), "coordinates shape is not align atoms"
+    assert len(atoms) == len(coordinates), "coordinates shape does not align with atoms"
     coordinates = torch.tensor(coordinates, dtype=torch.float32)
     if remove_hs:
         idx = [i for i, atom in enumerate(atoms) if atom != 'H']
@@ -131,16 +127,16 @@ def coords2unimol(
         assert len(atoms_no_h) == len(coordinates_no_h), "coordinates shape is not align with atoms"
         atoms, coordinates = atoms_no_h, coordinates_no_h
 
-    # cropping atoms and coordinates
+    # Crop atoms and coordinates if exceeding max_atoms
     if len(atoms) > max_atoms:
         idx = torch.randperm(len(atoms))[:max_atoms]
         atoms = [atoms[i] for i in idx.tolist()]
         coordinates = coordinates[idx]
 
-    # coordinates normalization
+    # Normalize coordinates
     coordinates = coordinates - coordinates.mean(dim=0)
 
-    # add noise and mask
+    # Add noise and mask
     src_tokens, src_coord, tgt_tokens = apply_noise_and_mask(
         src_tokens=torch.tensor([dictionary.index(atom) for atom in atoms], dtype=torch.long),
         coordinates=coordinates,
@@ -153,21 +149,21 @@ def coords2unimol(
         random_token_prob=random_token_prob
     )
 
-    # tokens padding
+    # Pad tokens
     src_tokens = torch.cat([torch.tensor([dictionary.bos()]), src_tokens, torch.tensor([dictionary.eos()])], dim=0)
     tgt_tokens = torch.cat([torch.tensor([dictionary.bos()]), tgt_tokens, torch.tensor([dictionary.eos()])], dim=0)
 
-    # coordinates padding
+    # Pad coordinates
     pad = torch.zeros((1, 3), dtype=torch.float32)
     src_coord = torch.cat([pad, src_coord, pad], dim=0)
     tgt_coordinates = torch.cat([pad, coordinates, pad], dim=0)
 
-    # distance matrix
+    # Calculate distance matrix
     diff = src_coord.unsqueeze(0) - src_coord.unsqueeze(1)
     src_distance = torch.norm(diff, dim=-1)
     tgt_distance = torch.norm(tgt_coordinates.unsqueeze(0) - tgt_coordinates.unsqueeze(1), dim=-1)
 
-    # edge type
+    # Calculate edge type
     src_edge_type = src_tokens.view(-1, 1) * len(dictionary) + src_tokens.view(1, -1)
 
     return {
@@ -213,7 +209,7 @@ def apply_noise_and_mask(
     tgt_tokens[mask] = src_tokens[mask]
     tgt_tokens = torch.from_numpy(tgt_tokens).long()
 
-    # determine unmasked and random tokens
+    # Determine unmasked and random tokens
     rand_or_unmask_prob = random_token_prob + leave_unmasked_prob
     if rand_or_unmask_prob > 0:
         rand_or_unmask = mask & (np.random.rand(sz) < rand_or_unmask_prob)
@@ -239,7 +235,8 @@ def apply_noise_and_mask(
 
     num_mask = mask.sum().item()
     new_coordinates = coordinates.clone()
-    # new_coordinates[mask, :] += noise_f
+
+    # Add noise to masked coordinates
     if noise_type == "trunc_normal":
         noise_f = np.clip(np.random.randn(num_mask, 3) * noise, -noise*2, noise*2)
     elif noise_type == "normal":

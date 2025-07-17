@@ -1,16 +1,18 @@
 import os
 import pickle
+
 import lmdb
-from tqdm import tqdm
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
-from unimol_tools.data.conformer import inner_smi2coords
 from unimol_tools.data import Dictionary
+from unimol_tools.data.conformer import inner_smi2coords
+
 
 def build_dictionary(lmdb_path, save_path=None):
     """
-    统计所有元素种类，返回带特殊符号的字典列表
+    Count all element types and return a dictionary list with special tokens.
     """
     env = lmdb.open(
         lmdb_path, 
@@ -37,7 +39,7 @@ def build_dictionary(lmdb_path, save_path=None):
     env.close()
     if save_path is None:
         save_path = os.path.join(os.path.dirname(lmdb_path), 'dictionary.txt')
-    # logging
+    # Save dictionary to file
     with open(save_path, 'wb') as f:
         np.savetxt(f, dictionary, fmt='%s')
     return Dictionary.from_list(dictionary)
@@ -70,7 +72,7 @@ def write_to_lmdb(lmdb_path, smiles_list):
 
 def process_smiles(smiles, idx, remove_hs=False, **params):
     """
-    处理单个SMILES字符串，返回索引和序列化数据
+    Process a single SMILES string and return index and serialized data.
     """
     atoms, coordinates, mol = inner_smi2coords(
                 smiles, seed=42, mode='fast', remove_hs=remove_hs
@@ -87,20 +89,10 @@ def process_smiles(smiles, idx, remove_hs=False, **params):
 
 def process_csv(csv_path, smiles_col='SMILES'):
     """
-    读取CSV文件，返回SMILES列表
+    Read a CSV file and return a list of SMILES strings.
     """
     df = pd.read_csv(csv_path)
     if smiles_col not in df.columns:
         raise ValueError(f"Column '{smiles_col}' not found in CSV file.")
     return df[smiles_col].tolist()
 
-if __name__ == "__main__":
-    # csv_path = '/fs_mol/cuiyaning/user/data/data/admet_group/ames/train_val.csv'
-    # smiles_list = process_csv(csv_path, smiles_col='Drug')
-    lmdb_path = '/fs_mol/cuiyaning/user/github/unimol_tools/tdc_ames.lmdb'
-    # write_to_lmdb(lmdb_path, smiles_list)
-    dict_path = '/fs_mol/cuiyaning/user/github/unimol_tools/tdc_ames_dict.txt'
-    build_dictionary(lmdb_path, save_path=dict_path)
-
-    dictionary = Dictionary.load(dict_path)
-    print(dictionary)

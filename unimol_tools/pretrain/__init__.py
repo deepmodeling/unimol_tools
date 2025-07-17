@@ -1,6 +1,6 @@
-from .preprocess import build_dictionary
 from .dataset import LMDBDataset, UniMolDataset
 from .loss import UniMolloss
-from .unimol import UniMolModel
-from .trainer import UniMolPretrainTrainer
+from .preprocess import build_dictionary
 from .pretrain_config import PretrainConfig
+from .trainer import UniMolPretrainTrainer
+from .unimol import UniMolModel

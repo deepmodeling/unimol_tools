@@ -1,10 +1,9 @@
-# unimol_tools/ta/config.py
-
-import warnings
 from dataclasses import dataclass, field
 from typing import Optional
-from omegaconf import MISSING
+
 from hydra.core.config_store import ConfigStore
+from omegaconf import MISSING
+
 
 @dataclass
 class DatasetConfig:
@@ -49,10 +48,9 @@ class TrainingConfig:
     epochs: int = 10
     save_every_n_epoch: int = 1
     use_amp: bool = True
-    log_wandb: bool = True
-    wandb_project: str = "unimol_pretrain"
     local_rank: int = 0
     seed: int = 42
+    resume: Optional[str] = None
 
 @dataclass
 class PretrainConfig:

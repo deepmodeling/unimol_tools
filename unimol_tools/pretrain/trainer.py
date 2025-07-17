@@ -1,18 +1,17 @@
+import logging
 import os
 import random
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
+from hydra.core.hydra_config import HydraConfig
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-import logging
-from hydra.core.hydra_config import HydraConfig
-
-from .pretrain_config import PretrainConfig
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +30,6 @@ class UniMolPretrainTrainer:
             os.makedirs(self.ckpt_dir, exist_ok=True)
             logger.info(f"Checkpoints will be saved to {self.ckpt_dir}")
 
-        # resume training from a checkpoint if provided
-        self.start_epoch = 0
-        self.global_step = 0
-        if resume is not None and os.path.isfile(resume):
-            self._load_checkpoint(resume)
-
         # DDP setup
         if 'WORLD_SIZE' in os.environ and int(os.environ['WORLD_SIZE']) > 1:
             torch.cuda.set_device(local_rank)
@@ -46,7 +39,11 @@ class UniMolPretrainTrainer:
         else:
             self.model = self.model.cuda()
 
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.config.lr if hasattr(self.config, 'lr') else 1e-4)
+        self.optimizer = optim.Adam(
+            self.model.parameters(), 
+            lr=self.config.lr,
+            weight_decay=self.config.weight_decay,
+            )
         self.criterion = nn.CrossEntropyLoss()
 
 
@@ -62,7 +59,7 @@ class UniMolPretrainTrainer:
 
         self.dataloader = DataLoader(
             self.dataset,
-            batch_size=self.config.batch_size if hasattr(self.config, 'batch_size') else 32,
+            batch_size=self.config.batch_size,
             shuffle=(self.sampler is None),
             sampler=self.sampler,
             num_workers=4,
@@ -71,6 +68,12 @@ class UniMolPretrainTrainer:
             worker_init_fn=seed_worker,
             generator=g,
         )
+
+        # resume training from a checkpoint if provided
+        self.start_epoch = 0
+        self.global_step = 0
+        if resume is not None and os.path.isfile(resume):
+            self._load_checkpoint(resume)
 
     def train(self, epochs=None):
         epochs = epochs or self.config.epochs
@@ -149,7 +152,7 @@ class UniMolPretrainTrainer:
             f.unlink()
 
     def decorate_batch(self, batch):
-        # batch为dict of tensors (batch_size, ...)
+        # batch is a dict of tensors (batch_size, ...)
         device = torch.device(f"cuda:{self.local_rank}" if torch.cuda.is_available() else "cpu")
         net_input = {
             'src_tokens': batch['net_input']['src_tokens'].to(device),
@@ -166,16 +169,16 @@ class UniMolPretrainTrainer:
 
     @staticmethod
     def reduce_metrics(logging_outputs, writer=None, logger=None, epoch=None, split="Epoch"):
-        # 聚合
+        # Aggregate metrics from all logging outputs
         agg = {}
         for log in logging_outputs:
             for k, v in log.items():
                 if k not in agg:
                     agg[k] = []
                 agg[k].append(v)
-        # 计算均值
+        # Calculate mean for each metric
         metrics_mean = {k: (sum(v)/len(v) if len(v)>0 else 0) for k, v in agg.items()}
-        # 记录到writer和logger
+        # Log metrics to writer and logger
         if writer is not None and epoch is not None:
             if 'loss' in metrics_mean:
                 writer.add_scalar(f"{split}/loss", metrics_mean['loss'], epoch)
@@ -184,7 +187,7 @@ class UniMolPretrainTrainer:
                     continue
                 writer.add_scalar(f"{split}/{k}", v, epoch)
         if logger is not None and epoch is not None:
-            # loss放在第一位，其余按原顺序
+            # Put loss first, others follow original order
             log_items = []
             if 'loss' in metrics_mean:
                 v = metrics_mean['loss']
