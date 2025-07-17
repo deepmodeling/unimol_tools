@@ -149,3 +149,11 @@ class Dictionary:
                 raise ValueError(
                     "Incorrect dictionary format, expected '<token> <cnt> [flags]'"
                 )
+    
+    @classmethod
+    def from_list(cls, symbol_list):
+        """Creates a Dictionary instance from a list of symbols."""
+        d = cls()
+        for sym in symbol_list:
+            d.add_symbol(sym)
+        return d
