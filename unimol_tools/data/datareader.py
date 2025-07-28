@@ -153,6 +153,9 @@ class MolDataReader(object):
             data = data[mask]
             dd['smiles'] = data[smiles_col].tolist()
             dd['scaffolds'] = data[smiles_col].map(self.smi2scaffold).tolist()
+        elif 'ROMol' in data.columns:
+            dd['smiles'] = None
+            dd['scaffolds'] = data['ROMol'].apply(self.mol2scaffold).tolist()
         else:
             dd['smiles'] = None
             dd['scaffolds'] = None
@@ -206,6 +209,23 @@ class MolDataReader(object):
             )
         except:
             return smi
+
+    def mol2scaffold(self, mol):
+        """
+        Converts an RDKit molecule to its corresponding scaffold.
+
+        :param mol: (RDKit Mol) The molecule to convert.
+
+        :return: (str) The scaffold of the molecule, or the original SMILES if conversion fails.
+        """
+        if not isinstance(mol, Chem.Mol):
+            raise ValueError('Input must be an RDKit Mol object')
+        try:
+            return MurckoScaffold.MurckoScaffoldSmiles(
+                mol=mol, includeChirality=True
+            )
+        except:
+            return Chem.MolToSmiles(mol, includeChirality=True)
 
     def anomaly_clean(self, data, task, target_cols):
         """

@@ -13,23 +13,45 @@ except:
         )
 
 
-WEIGHT_DIR = os.environ.get(
-    'UNIMOL_WEIGHT_DIR', os.path.dirname(os.path.abspath(__file__))
-)
+DEFAULT_WEIGHT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # use mirror to download weights
+def get_weight_dir():
+    """Return the directory where weights should be stored."""
+    return os.environ.get("UNIMOL_WEIGHT_DIR", DEFAULT_WEIGHT_DIR)
+
+HF_MIRROR = "https://hf-mirror.com"
+
+def _snapshot_download_with_fallback(**kwargs):
+    """Try downloading with the current HF_ENDPOINT and fall back to the mirror.
+
+    The mirror is only tried when the user has not explicitly set HF_ENDPOINT
+    and the first attempt fails.
+    """
+    user_set = "HF_ENDPOINT" in os.environ
+    try:
+        return snapshot_download(**kwargs)
+    except Exception as e:
+        if user_set:
+            raise
+        logger.warning(
+            f"Download failed from Hugging Face: {e}. Retrying with {HF_MIRROR}"
+        )
+        os.environ["HF_ENDPOINT"] = HF_MIRROR
+        return snapshot_download(**kwargs)
 
 
 def log_weights_dir():
     """
     Logs the directory where the weights are stored.
     """
+    weight_dir = get_weight_dir()
+    
     if 'UNIMOL_WEIGHT_DIR' in os.environ:
         logger.warning(
-            f'Using custom weight directory from UNIMOL_WEIGHT_DIR: {WEIGHT_DIR}'
+            f'Using custom weight directory from UNIMOL_WEIGHT_DIR: {weight_dir}'
         )
     else:
-        logger.info(f'Weights will be downloaded to default directory: {WEIGHT_DIR}')
+        logger.info(f'Weights will be downloaded to default directory: {weight_dir}')
 
 
 def weight_download(pretrain, save_path, local_dir_use_symlinks=True):
@@ -47,11 +69,11 @@ def weight_download(pretrain, save_path, local_dir_use_symlinks=True):
         return
 
     logger.info(f'Downloading {pretrain}')
-    snapshot_download(
+    _snapshot_download_with_fallback(
         repo_id="dptech/Uni-Mol-Models",
         local_dir=save_path,
         allow_patterns=pretrain,
-        local_dir_use_symlinks=local_dir_use_symlinks,
+        # local_dir_use_symlinks=local_dir_use_symlinks,
         # max_workers=8
     )
 
@@ -71,11 +93,11 @@ def weight_download_v2(pretrain, save_path, local_dir_use_symlinks=True):
         return
 
     logger.info(f'Downloading {pretrain}')
-    snapshot_download(
+    _snapshot_download_with_fallback(
         repo_id="dptech/Uni-Mol2",
         local_dir=save_path,
         allow_patterns=pretrain,
-        local_dir_use_symlinks=local_dir_use_symlinks,
+        # local_dir_use_symlinks=local_dir_use_symlinks,
         # max_workers=8
     )
 
@@ -88,13 +110,14 @@ def download_all_weights(local_dir_use_symlinks=False):
     :param local_dir_use_symlinks: (bool, optional), Whether to use symlinks for the local directory. Defaults to False.
     """
     log_weights_dir()
+    weight_dir = get_weight_dir()
 
-    logger.info(f'Downloading all weights to {WEIGHT_DIR}')
-    snapshot_download(
+    logger.info(f'Downloading all weights to {weight_dir}')
+    _snapshot_download_with_fallback(
         repo_id="dptech/Uni-Mol-Models",
-        local_dir=WEIGHT_DIR,
+        local_dir=weight_dir,
         allow_patterns='*',
-        local_dir_use_symlinks=local_dir_use_symlinks,
+        # local_dir_use_symlinks=local_dir_use_symlinks,
         # max_workers=8
     )
 

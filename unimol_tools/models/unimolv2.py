@@ -11,10 +11,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from addict import Dict
+import numpy as np
 
 from ..config import MODEL_CONFIG_V2
 from ..utils import logger, pad_1d_tokens, pad_2d, pad_coords
-from ..weights import WEIGHT_DIR, weight_download_v2
+from ..weights import get_weight_dir, weight_download_v2
 from .transformersv2 import (
     AtomFeature,
     EdgeFeature,
@@ -64,12 +65,13 @@ class UniMolV2Model(nn.Module):
         self.remove_hs = params.get('remove_hs', False)
 
         name = model_size
+        weight_dir = get_weight_dir()
         if not os.path.exists(
-            os.path.join(WEIGHT_DIR, MODEL_CONFIG_V2['weight'][name])
+            os.path.join(weight_dir, MODEL_CONFIG_V2['weight'][name])
         ):
-            weight_download_v2(MODEL_CONFIG_V2['weight'][name], WEIGHT_DIR)
+            weight_download_v2(MODEL_CONFIG_V2['weight'][name], weight_dir)
 
-        self.pretrain_path = os.path.join(WEIGHT_DIR, MODEL_CONFIG_V2['weight'][name])
+        self.pretrain_path = os.path.join(weight_dir, MODEL_CONFIG_V2['weight'][name])
 
         self.token_num = 128
         self.padding_idx = 0
@@ -388,7 +390,7 @@ class UniMolV2Model(nn.Module):
                 )
             batch[k] = v
         try:
-            label = torch.tensor([s[1] for s in samples])
+            label = torch.tensor(np.array([s[1] for s in samples]))
         except:
             label = None
         return batch, label

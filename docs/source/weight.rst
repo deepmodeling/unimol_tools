@@ -22,7 +22,7 @@ If the download is slow, you can use other mirrors, such as:
 
     export HF_ENDPOINT=https://hf-mirror.com
 
-Setting the ``HF_ENDPOINT`` environment variable specifies the mirror address for the Hugging Face Hub to use when downloading models.
+By default ``unimol_tools`` first tries the official Hugging Face endpoint. If that fails and ``HF_ENDPOINT`` is not set, it automatically retries with ``https://hf-mirror.com``. Set the variable yourself to choose a specific endpoint.
 
 `unimol_tools.weights.weight_hub.py <https://github.com/deepmodeling/unimol_tools/blob/main/unimol_tools/weights/weighthub.py>`_ control the logger.
 

@@ -187,11 +187,11 @@ export MASTER_PORT='19198'
 Currently unimol_tools supports five types of fine-tuning tasks: `classification`, `regression`, `multiclass`, `multilabel_classification`, `multilabel_regression`.
 
 The datasets used in the examples are all open source and available, including
-- Ames mutagenicity. The dataset includes 6512 compounds and corresponding binary labels from Ames Mutagenicity results.
-- ESOL (delaney) is a standard regression dataset containing structures and water solubility data for 1128 compounds.
-- Tox21 Data Challenge 2014 is designed to help scientists understand the potential of the chemicals and compounds being tested through the Toxicology in the 21st Century initiative to disrupt biological pathways in ways that may result in toxic effects, which includes 12 date sets. The official web site is https://tripod.nih.gov/tox21/challenge/
-- Solvation free energy (FreeSolv). SMILES are provided.
-- Vector-QM24 (VQM24) dataset. Quantum chemistry dataset of ~836 thousand small organic and inorganic molecules.
+- Ames mutagenicity. The dataset includes 6512 compounds and corresponding binary labels from Ames Mutagenicity results. The dataset is available at https://weilab.math.msu.edu/DataLibrary/2D/.
+- ESOL (delaney) is a standard regression dataset containing structures and water solubility data for 1128 compounds. The dataset is available at https://weilab.math.msu.edu/DataLibrary/2D/ and https://huggingface.co/datasets/HR-machine/ESol.
+- Tox21 Data Challenge 2014 is designed to help scientists understand the potential of the chemicals and compounds being tested through the Toxicology in the 21st Century initiative to disrupt biological pathways in ways that may result in toxic effects, which includes 12 date sets. The official web site is https://tripod.nih.gov/tox21/challenge/. The datasets is available at https://moleculenet.org/datasets-1 and https://www.kaggle.com/datasets/maksiamiogan/tox21-dataset.
+- Solvation free energy (FreeSolv). SMILES are provided. The dataset is available at https://weilab.math.msu.edu/DataLibrary/2D/.
+- Vector-QM24 (VQM24) dataset. Quantum chemistry dataset of ~836 thousand small organic and inorganic molecules. The dataset is available at https://zenodo.org/records/15442257.
 
 ### Example of classification
 You can use a dictionary as input. The default smiles column name is **'SMILES'** and the target column name is **'target'**. You can also customize it with `smiles_col` and `target_cols`.
@@ -411,7 +411,7 @@ predictor = MolPredict(load_model='./exp')
 pred = predictor.predict(test_df_dict['smiles'])
 ```
 
-It also supports directly using the sdf file path as input.
+It also supports directly using the sdf file path as input. The following example reads it in advance due to preprocessing missing values.
 
 ```python
 from unimol_tools import MolTrain, MolPredict

@@ -230,7 +230,7 @@ def FocalLossWithLogits(y_pred, y_true, alpha=0.25, gamma=2.0):
     mask = ~torch.isnan(y_true)
     y_pred = y_pred[mask]
     y_true = y_true[mask]
-    loss = FocalLoss(y_pred, y_true)
+    loss = FocalLoss(y_pred, y_true, alpha=alpha, gamma=gamma)
     return loss
 
 
