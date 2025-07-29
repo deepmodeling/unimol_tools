@@ -2,6 +2,7 @@ import os
 import numpy as np
 import pytest
 from rdkit import Chem
+from utils_net import download_for_test
 
 from unimol_tools import MolTrain, MolPredict
 
@@ -9,21 +10,29 @@ ESOL_TRAIN_URL = 'https://huggingface.co/datasets/HR-machine/ESol/resolve/main/t
 ESOL_TEST_URL = 'https://huggingface.co/datasets/HR-machine/ESol/resolve/main/test_data.csv?download=true'
 VQM24_URL = 'https://zenodo.org/records/15442257/files/DMC.npz?download=1'
 
-def download(url, dest):
-    import requests
-    r = requests.get(url)
-    r.raise_for_status()
-    dest.write_bytes(r.content)
 
-
+@pytest.mark.network
 def test_regression_esol(tmp_path):
     train_csv = tmp_path / 'train.csv'
     test_csv = tmp_path / 'test.csv'
-    try:
-        download(ESOL_TRAIN_URL, train_csv)
-        download(ESOL_TEST_URL, test_csv)
-    except Exception as e:
-        pytest.skip(f"Could not download dataset: {e}")
+    download_for_test(
+        ESOL_TRAIN_URL,
+        train_csv,
+        timeout=(5, 60),
+        max_retries=5,
+        backoff_factor=0.5,
+        allow_resume=True,
+        skip_on_failure=True,
+    )
+    download_for_test(
+        ESOL_TEST_URL,
+        test_csv,
+        timeout=(5, 60),
+        max_retries=5,
+        backoff_factor=0.5,
+        allow_resume=True,
+        skip_on_failure=True,
+    )
 
     exp_dir = tmp_path / 'exp_esol'
     reg = MolTrain(
@@ -43,12 +52,19 @@ def test_regression_esol(tmp_path):
     assert len(preds) > 0
 
 
+@pytest.mark.network
 def test_regression_vqm24(tmp_path):
     npz_path = tmp_path / 'dmc.npz'
-    try:
-        download(VQM24_URL, npz_path)
-    except Exception as e:
-        pytest.skip(f"Could not download dataset: {e}")
+    download_for_test(
+        VQM24_URL,
+        npz_path,
+        timeout=(5, 60),
+        max_retries=5,
+        backoff_factor=0.5,
+        allow_resume=True,
+        expected_md5="565e295d845662d7df8e0dcca6db0d21",
+        skip_on_failure=True,
+    )
     data = np.load(npz_path, allow_pickle=True)
     atoms_all = data['atoms']
     coords_all = data['coordinates']

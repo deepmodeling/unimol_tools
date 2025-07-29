@@ -3,26 +3,26 @@ import zipfile
 import pandas as pd
 import numpy as np
 import pytest
+from utils_net import download_for_test
 
 from unimol_tools import MolTrain, MolPredict
 
 DATA_URL = 'https://weilab.math.msu.edu/DataLibrary/2D/Downloads/ESOL_smi.zip'
 
 
-def download_dataset(dest):
-    import requests
-    r = requests.get(DATA_URL)
-    r.raise_for_status()
-    dest.write_bytes(r.content)
-
-
+@pytest.mark.network
 def test_multiclass_train_predict(tmp_path):
     os.environ.setdefault('UNIMOL_WEIGHT_DIR', str(tmp_path / 'weights'))
     zip_path = tmp_path / 'ESOL_smi.zip'
-    try:
-        download_dataset(zip_path)
-    except Exception as e:
-        pytest.skip(f"Could not download dataset: {e}")
+    download_for_test(
+        DATA_URL,
+        zip_path,
+        timeout=(5, 60),
+        max_retries=5,
+        backoff_factor=0.5,
+        allow_resume=True,
+        skip_on_failure=True,
+    )
     with zipfile.ZipFile(zip_path, 'r') as zf:
         zf.extractall(tmp_path)
     csv_path = tmp_path / 'ESOL.csv'

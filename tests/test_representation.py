@@ -3,6 +3,7 @@ import zipfile
 import numpy as np
 import pandas as pd
 import pytest
+from utils_net import download_for_test
 from rdkit.Chem import PandasTools
 
 from unimol_tools import UniMolRepr
@@ -12,19 +13,19 @@ TOX21_CSV_URL = 'https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/tox21.
 TOX21_SDF_URL = 'https://tripod.nih.gov/tox21/challenge/download?id=tox21_10k_data_allsdf&sec='
 
 
-def download(url, dest):
-    import requests
-    r = requests.get(url)
-    r.raise_for_status()
-    dest.write_bytes(r.content)
-
-
+@pytest.mark.network
 def test_unimol_repr_vqm24(tmp_path):
     npz_path = tmp_path / 'DMC.npz'
-    try:
-        download(VQM24_URL, npz_path)
-    except Exception as e:
-        pytest.skip(f'Could not download dataset: {e}')
+    download_for_test(
+        VQM24_URL,
+        npz_path,
+        timeout=(5, 60),
+        max_retries=5,
+        backoff_factor=0.5,
+        allow_resume=True,
+        expected_md5="565e295d845662d7df8e0dcca6db0d21",
+        skip_on_failure=True,
+    )
     data = np.load(npz_path, allow_pickle=True)
     atoms = data['atoms'][:100]
     coords = data['coordinates'][:100]
@@ -42,13 +43,19 @@ def test_unimol_repr_vqm24(tmp_path):
     assert 'cls_repr' in out and len(out['cls_repr']) == len(smiles)
 
 
+@pytest.mark.network
 def test_unimol_repr_tox21_csv(tmp_path):
     gz_path = tmp_path / 'tox21.csv.gz'
     csv_path = tmp_path / 'tox21.csv'
-    try:
-        download(TOX21_CSV_URL, gz_path)
-    except Exception as e:
-        pytest.skip(f'Could not download dataset: {e}')
+    download_for_test(
+        TOX21_CSV_URL,
+        gz_path,
+        timeout=(5, 60),
+        max_retries=5,
+        backoff_factor=0.5,
+        allow_resume=True,
+        skip_on_failure=True,
+    )
     with gzip.open(gz_path, 'rb') as fin, open(csv_path, 'wb') as fout:
         fout.write(fin.read())
     df = pd.read_csv(csv_path).head(100)
@@ -60,12 +67,18 @@ def test_unimol_repr_tox21_csv(tmp_path):
     assert tensor.shape[0] == len(df)
 
 
+@pytest.mark.network
 def test_unimol_repr_tox21_sdf(tmp_path):
     zip_path = tmp_path / 'tox21.zip'
-    try:
-        download(TOX21_SDF_URL, zip_path)
-    except Exception as e:
-        pytest.skip(f'Could not download dataset: {e}')
+    download_for_test(
+        TOX21_SDF_URL,
+        zip_path,
+        timeout=(5, 60),
+        max_retries=5,
+        backoff_factor=0.5,
+        allow_resume=True,
+        skip_on_failure=True,
+    )
     with zipfile.ZipFile(zip_path, 'r') as zf:
         zf.extractall(tmp_path)
     sdf_files = list(tmp_path.rglob('*.sdf'))
