@@ -29,7 +29,7 @@ class Dictionary:
         self.specials = set()
 
         # initialize dictionary with special tokens
-        for token in [pad, unk, bos, eos]:
+        for token in [bos, unk, pad, eos]:
             self.add_symbol(token, is_special=True)
 
         if extra_special_symbols is not None:
