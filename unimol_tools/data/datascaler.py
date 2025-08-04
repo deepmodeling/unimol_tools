@@ -164,7 +164,7 @@ class TargetScaler(object):
         elif method == 'power_trans':
             scaler = (
                 PowerTransformer(method='box-cox')
-                if min(target) > 0
+                if np.min(target) > 0
                 else PowerTransformer(method='yeo-johnson')
             )
         elif method == 'normalizer':

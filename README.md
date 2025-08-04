@@ -53,13 +53,13 @@ python setup.py install
 
 The UniMol pretrained models can be found at [dptech/Uni-Mol-Models](https://huggingface.co/dptech/Uni-Mol-Models/tree/main).
 
-If the download is slow, you can use other mirrors, such as:
+If the download is slow, you can use a mirror, such as:
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
 ```
 
-Setting the `HF_ENDPOINT` environment variable specifies the mirror address for the Hugging Face Hub to use when downloading models.
+By default `unimol_tools` first tries the official Hugging Face endpoint. If that fails and `HF_ENDPOINT` is not set, it automatically retries using `https://hf-mirror.com`. Set `HF_ENDPOINT` yourself if you want to explicitly choose a mirror or the official site.
 
 ### Modify the default directory for weights
 

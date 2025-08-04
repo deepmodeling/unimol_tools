@@ -136,7 +136,7 @@ class UniMolRepr(object):
         elif isinstance(data, pd.DataFrame):
             # pandas DataFrame of smiles strings.
             if self.params['smiles_col'] not in data.columns:
-                assert 'atoms' in data.columns and 'coordinates' in data.columns
+                assert ('atoms' in data.columns and 'coordinates' in data.columns) or 'ROMol' in data.columns
             else:
                 assert isinstance(data[self.params['smiles_col']].iloc[0], str)
         else:
