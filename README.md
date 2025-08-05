@@ -19,7 +19,6 @@ Unimol_tools is a easy-use wrappers for property prediction,representation and d
 
 ## Install
 - pytorch is required, please install pytorch according to your environment. if you are using cuda, please install pytorch with cuda. More details can be found at https://pytorch.org/get-started/locally/
-- currently, rdkit needs with numpy<2.0.0, please install rdkit with numpy<2.0.0.
 
 ### Option 1: Installing from PyPi (Recommended, for stable version)
 
