@@ -108,10 +108,11 @@ class UniMolPretrainTrainer:
         save_every = getattr(self.config, "save_every_n_epoch", 5)
 
         for epoch in range(self.start_epoch, epochs):
+            display_epoch = epoch + 1
             if self.sampler:
                 self.sampler.set_epoch(epoch)
             self.model.train()
-            logger.info(f"Starting epoch {epoch}")
+            logger.info(f"Starting epoch {display_epoch}")
             logging_infos = []
 
             for i, batch in enumerate(self.dataloader):
@@ -131,30 +132,24 @@ class UniMolPretrainTrainer:
                             continue
                         self.writer.add_scalar(f'Step/{key}', value, step_idx)
 
-            metrics = None
             if self.local_rank == 0:
-                metrics = self.reduce_metrics(logging_infos, writer=self.writer, logger=logger, epoch=epoch, split="train")
+                self.reduce_metrics(logging_infos, writer=self.writer, logger=logger, epoch=display_epoch, split="train")
 
-            should_save = (epoch + 1) % save_every == 0
+            should_save = display_epoch % save_every == 0
             val_metrics = None
-            if should_save and self.valid_dataloader is not None:
-                val_metrics = self.evaluate(epoch)
+            if self.valid_dataloader is not None:
+                log_val = should_save
+                val_metrics = self.evaluate(display_epoch, log=log_val)
 
             if self.local_rank == 0 and should_save:
-                curr_loss = None
-                if val_metrics is not None:
+                self._save_checkpoint(epoch, 'checkpoint_last.ckpt')
+                if self.valid_dataloader is not None and val_metrics is not None:
                     curr_loss = val_metrics.get('loss', float('inf'))
-                elif metrics is not None:
-                    curr_loss = metrics.get('loss', float('inf'))
-                if curr_loss is not None:
-                    self._save_checkpoint(epoch, 'checkpoint_last.ckpt')
                     if curr_loss < self.best_loss:
                         self.best_loss = curr_loss
-                        logger.info(f"New best model at epoch {epoch} with loss {curr_loss:.4f}")
+                        logger.info(f"New best model at epoch {display_epoch} with loss {curr_loss:.4f}")
                         self._save_checkpoint(epoch, 'checkpoint_best.ckpt')
-                    self._save_checkpoint(epoch, epoch)
-            elif self.local_rank == 0 and not should_save:
-                logger.info(f"Skipping validation and checkpointing at epoch {epoch}")
+                self._save_checkpoint(epoch, display_epoch)
 
         if self.writer:
             self.writer.close()
@@ -170,9 +165,7 @@ class UniMolPretrainTrainer:
             "epoch": epoch,
             "step": self.global_step,
         }
-        if name is None:
-            save_name = 'latest.ckpt'
-        elif isinstance(name, int):
+        if isinstance(name, int):
             save_name = f'epoch_{name}.ckpt'
         else:
             save_name = name
@@ -200,7 +193,7 @@ class UniMolPretrainTrainer:
         for f in epoch_files[:-keep]:
             f.unlink()
             
-    def evaluate(self, epoch):
+    def evaluate(self, epoch, log: bool = False):
         self.model.eval()
         logging_infos = []
         with torch.no_grad():
@@ -208,7 +201,13 @@ class UniMolPretrainTrainer:
                 net_input, net_target = self.decorate_batch(batch)
                 loss, logging_info = self.loss_fn(self.model, net_input, net_target)
                 logging_infos.append(logging_info)
-        metrics = self.reduce_metrics(logging_infos, writer=self.writer, logger=logger, epoch=epoch, split="valid")
+        metrics = self.reduce_metrics(
+            logging_infos,
+            writer=self.writer,
+            logger=logger if log else None,
+            epoch=epoch,
+            split="valid",
+        )
         self.model.train()
         return metrics
 
