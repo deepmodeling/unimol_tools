@@ -39,7 +39,7 @@ class LMDBDataset(Dataset):
             'idx': item.get('idx'),
             'atoms': atoms,
             'coordinates': coordinates,
-            'smiles': item.get('smiles'),
+            'smi': item.get('smi'),
         }
         return result
 
@@ -47,13 +47,14 @@ class UniMolDataset(Dataset):
     """
     Loads LMDBDataset for UniMol models.
     """
-    def __init__(self, lmdb_dataset, dictionary, remove_hs=False, max_atoms=256, seed=1, **params):
+    def __init__(self, lmdb_dataset, dictionary, remove_hs=False, max_atoms=256, seed=1, sample_conformer=False, **params):
         self.dataset = lmdb_dataset
         self.length = len(self.dataset)
         self.dictionary = dictionary
         self.remove_hs = remove_hs
         self.max_atoms = max_atoms
         self.seed = seed
+        self.sample_conformer = sample_conformer
         self.params = params
         self.mask_id = dictionary.add_symbol("[MASK]", is_special=True)
         self.set_epoch(0)  # Initialize epoch to 0
@@ -81,6 +82,14 @@ class UniMolDataset(Dataset):
         
         if atoms is None or coordinates is None:
             raise ValueError(f"Invalid data at index {idx}: atoms or coordinates are None.")
+        
+        if isinstance(coordinates, list):
+            if self.sample_conformer:
+                np.random.seed(self.seed + epoch + idx)
+                sel = np.random.randint(len(coordinates))
+                coordinates = coordinates[sel]
+            else:
+                coordinates = coordinates[0]
         
         net_input, target = coords2unimol(
             atoms=atoms, 

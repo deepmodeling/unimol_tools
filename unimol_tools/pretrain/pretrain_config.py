@@ -2,13 +2,16 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from hydra.core.config_store import ConfigStore
-from omegaconf import MISSING
 
 
 @dataclass
 class DatasetConfig:
-    train_lmdb: str = MISSING
+    train_lmdb: Optional[str] = None
     valid_lmdb: Optional[str] = None
+    train_path: Optional[str] = None
+    valid_path: Optional[str] = None
+    data_type: str = "lmdb"
+    smiles_column: str = "smi"
     dict_path: Optional[str] = None
     remove_hydrogen: bool = False
     max_atoms: int = 256
@@ -17,6 +20,8 @@ class DatasetConfig:
     mask_prob: float = 0.15
     leave_unmasked_prob: float = 0.1
     random_token_prob: float = 0.1
+    unimol_style: bool = False
+    num_conformers: int = 10
 
 @dataclass
 class ModelConfig:
@@ -59,8 +64,16 @@ class PretrainConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
     def validate(self):
-        if self.dataset.train_lmdb is MISSING:
-            raise ValueError("train_lmdb must be specified in the dataset configuration.")
+        if self.dataset.data_type == "lmdb":
+            if not self.dataset.train_lmdb:
+                raise ValueError(
+                    "train_lmdb must be specified when data_type is 'lmdb'."
+                )
+        else:
+            if not self.dataset.train_path:
+                raise ValueError(
+                    "train_path must be specified when data_type is not 'lmdb'."
+                )
         if self.model.encoder_layers <= 0:
             raise ValueError("encoder_layers must be a positive integer.")
         if self.training.batch_size <= 0:

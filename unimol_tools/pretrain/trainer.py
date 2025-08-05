@@ -16,9 +16,10 @@ from torch.utils.tensorboard import SummaryWriter
 logger = logging.getLogger(__name__)
 
 class UniMolPretrainTrainer:
-    def __init__(self, model, dataset, loss_fn, config, local_rank=0, resume: str=None):
+    def __init__(self, model, dataset, loss_fn, config, local_rank=0, resume: str=None, valid_dataset=None):
         self.model = model
         self.dataset = dataset
+        self.valid_dataset = valid_dataset
         self.loss_fn = loss_fn
         self.config = config
         self.local_rank = local_rank
@@ -40,18 +41,25 @@ class UniMolPretrainTrainer:
             self.model = self.model.cuda()
 
         self.optimizer = optim.Adam(
-            self.model.parameters(), 
+            self.model.parameters(),
             lr=self.config.lr,
             weight_decay=self.config.weight_decay,
             )
         self.criterion = nn.CrossEntropyLoss()
 
+        self.best_loss = float("inf")
 
         # DDP DataLoader
         if 'WORLD_SIZE' in os.environ and int(os.environ['WORLD_SIZE']) > 1:
             self.sampler = torch.utils.data.distributed.DistributedSampler(self.dataset)
+            self.valid_sampler = (
+                torch.utils.data.distributed.DistributedSampler(self.valid_dataset, shuffle=False)
+                if self.valid_dataset is not None
+                else None
+            )
         else:
             self.sampler = None
+            self.valid_sampler = None
         logger.info(f"Using sampler: {self.sampler}")
 
         g = torch.Generator()
@@ -68,22 +76,43 @@ class UniMolPretrainTrainer:
             worker_init_fn=seed_worker,
             generator=g,
         )
+        if self.valid_dataset is not None:
+            self.valid_dataloader = DataLoader(
+                self.valid_dataset,
+                batch_size=self.config.batch_size,
+                shuffle=False,
+                sampler=self.valid_sampler,
+                num_workers=4,
+                pin_memory=True,
+                collate_fn=self.model.batch_collate_fn,
+            )
+        else:
+            self.valid_dataloader = None
 
-        # resume training from a checkpoint if provided
+        # resume training from a checkpoint if provided or detect last
         self.start_epoch = 0
         self.global_step = 0
-        if resume is not None and os.path.isfile(resume):
-            self._load_checkpoint(resume)
+        resume_path = resume
+        if resume_path is None:
+            last_ckpt = self.ckpt_dir / 'checkpoint_last.ckpt'
+            if last_ckpt.exists():
+                resume_path = str(last_ckpt)
+        if resume_path is not None and os.path.isfile(resume_path):
+            self._load_checkpoint(resume_path)
+            logger.info(f"Resumed from checkpoint: {resume_path}")
+        else:
+            logger.info("No checkpoint found, starting from scratch.")
 
     def train(self, epochs=None):
         epochs = epochs or self.config.epochs
         save_every = getattr(self.config, "save_every_n_epoch", 5)
 
-        logging_infos = []
         for epoch in range(self.start_epoch, epochs):
             if self.sampler:
                 self.sampler.set_epoch(epoch)
             self.model.train()
+            logger.info(f"Starting epoch {epoch}")
+            logging_infos = []
 
             for i, batch in enumerate(self.dataloader):
                 net_input, net_target = self.decorate_batch(batch)
@@ -92,19 +121,40 @@ class UniMolPretrainTrainer:
                 loss.backward()
                 self.optimizer.step()
                 logging_infos.append(logging_info)
+                self.global_step += 1
 
                 if self.writer:
-                    self.writer.add_scalar('Step/loss', loss.item(), epoch * len(self.dataloader) + i)
+                    step_idx = epoch * len(self.dataloader) + i
+                    self.writer.add_scalar('Step/loss', loss.item(), step_idx)
                     for key, value in logging_info.items():
                         if key == 'loss':
                             continue
-                        self.writer.add_scalar(f'Step/{key}', value, epoch * len(self.dataloader) + i)
-            if self.local_rank == 0:
-                self.reduce_metrics(logging_infos, writer=self.writer, logger=logger, epoch=epoch, split="train")
+                        self.writer.add_scalar(f'Step/{key}', value, step_idx)
 
-            self._save_checkpoint(epoch)
-            if (epoch + 1) % save_every == 0:
-                self._save_checkpoint(epoch, epoch)
+            metrics = None
+            if self.local_rank == 0:
+                metrics = self.reduce_metrics(logging_infos, writer=self.writer, logger=logger, epoch=epoch, split="train")
+
+            should_save = (epoch + 1) % save_every == 0
+            val_metrics = None
+            if should_save and self.valid_dataloader is not None:
+                val_metrics = self.evaluate(epoch)
+
+            if self.local_rank == 0 and should_save:
+                curr_loss = None
+                if val_metrics is not None:
+                    curr_loss = val_metrics.get('loss', float('inf'))
+                elif metrics is not None:
+                    curr_loss = metrics.get('loss', float('inf'))
+                if curr_loss is not None:
+                    self._save_checkpoint(epoch, 'checkpoint_last.ckpt')
+                    if curr_loss < self.best_loss:
+                        self.best_loss = curr_loss
+                        logger.info(f"New best model at epoch {epoch} with loss {curr_loss:.4f}")
+                        self._save_checkpoint(epoch, 'checkpoint_best.ckpt')
+                    self._save_checkpoint(epoch, epoch)
+            elif self.local_rank == 0 and not should_save:
+                logger.info(f"Skipping validation and checkpointing at epoch {epoch}")
 
         if self.writer:
             self.writer.close()
@@ -126,10 +176,9 @@ class UniMolPretrainTrainer:
             save_name = f'epoch_{name}.ckpt'
         else:
             save_name = name
-            if not save_name.endswith('.ckpt'):
-                save_name += '.ckpt'
         save_path = os.path.join(self.ckpt_dir, save_name)
         torch.save(ckpt, save_path)
+        logger.info(f"Saved checkpoint: {save_path}")
         if isinstance(name, int):
             self._cleanup_old_checkpoints(keep=3)
 
@@ -150,6 +199,18 @@ class UniMolPretrainTrainer:
         epoch_files = sorted(self.ckpt_dir.glob("epoch_*.ckpt"), key=lambda p: int(p.stem.split("_")[1]))
         for f in epoch_files[:-keep]:
             f.unlink()
+            
+    def evaluate(self, epoch):
+        self.model.eval()
+        logging_infos = []
+        with torch.no_grad():
+            for batch in self.valid_dataloader:
+                net_input, net_target = self.decorate_batch(batch)
+                loss, logging_info = self.loss_fn(self.model, net_input, net_target)
+                logging_infos.append(logging_info)
+        metrics = self.reduce_metrics(logging_infos, writer=self.writer, logger=logger, epoch=epoch, split="valid")
+        self.model.train()
+        return metrics
 
     def decorate_batch(self, batch):
         # batch is a dict of tensors (batch_size, ...)
