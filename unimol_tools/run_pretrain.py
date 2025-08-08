@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from unimol_tools.pretrain import (
     LMDBDataset,
     UniMolDataset,
-    UniMolloss,
+    UniMolLoss,
     UniMolModel,
     UniMolPretrainTrainer,
     build_dictionary,
@@ -117,7 +117,7 @@ class MolPretrain:
         # Build model
         model = UniMolModel(self.config.model, dictionary=self.dictionary)
         # Build loss function
-        loss_fn = UniMolloss(
+        loss_fn = UniMolLoss(
             self.dictionary,
             masked_token_loss=self.config.model.masked_token_loss,
             masked_coord_loss=self.config.model.masked_coord_loss,

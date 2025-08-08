@@ -301,8 +301,8 @@ class UniMolPretrainTrainer:
         }
         return net_input, net_target
 
-    @staticmethod
     def reduce_metrics(
+        self,
         logging_outputs,
         writer=None,
         logger=None,
@@ -313,26 +313,20 @@ class UniMolPretrainTrainer:
         inner_step=None,
         inner_total=None,
     ):
-        # Aggregate metrics from all logging outputs
-        agg = {}
-        for log in logging_outputs:
-            for k, v in log.items():
-                agg.setdefault(k, []).append(v)
-        metrics_mean = {k: (sum(v) / len(v) if len(v) > 0 else 0) for k, v in agg.items()}
+        metrics_mean = self.loss_fn.reduce_metrics(logging_outputs, split=split)
         if writer is not None and step is not None:
-            if 'loss' in metrics_mean:
-                writer.add_scalar(f"{split}/loss", metrics_mean['loss'], step)
+            if "loss" in metrics_mean:
+                writer.add_scalar(f"{split}/loss", metrics_mean["loss"], step)
             for k, v in metrics_mean.items():
-                if k == 'loss':
+                if k == "loss":
                     continue
                 writer.add_scalar(f"{split}/{k}", v, step)
         if logger is not None and step is not None:
             log_items = []
-            if 'loss' in metrics_mean:
-                v = metrics_mean['loss']
-                log_items.append(f"loss={v:.4f}")
+            if "loss" in metrics_mean:
+                log_items.append(f"loss={metrics_mean['loss']:.4f}")
             for k, v in metrics_mean.items():
-                if k == 'loss':
+                if k == "loss":
                     continue
                 log_items.append(f"{k}={v:.4f}")
             if (

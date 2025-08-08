@@ -16,7 +16,13 @@ RDLogger.DisableLog('rdApp.*')
 warnings.filterwarnings(action='ignore')
 from multiprocessing import Pool
 
-from numba import njit
+try:  # pragma: no cover - optional dependency
+    from numba import njit
+except ModuleNotFoundError:  # pragma: no cover - fallback stub
+    def njit(*args, **kwargs):
+        def wrap(fn):
+            return fn
+        return wrap
 from tqdm import tqdm
 
 from ..config import MODEL_CONFIG
