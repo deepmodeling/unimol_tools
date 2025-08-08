@@ -10,6 +10,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 from hydra.core.hydra_config import HydraConfig
+from hydra.utils import get_original_cwd
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -25,7 +26,12 @@ class UniMolPretrainTrainer:
         self.config = config
         self.local_rank = local_rank
 
-        run_dir = HydraConfig.get().run.dir
+        run_dir = getattr(config, "output_dir", None)
+        if run_dir:
+            if not os.path.isabs(run_dir):
+                run_dir = os.path.join(get_original_cwd(), run_dir)
+        else:
+            run_dir = HydraConfig.get().run.dir
         self.ckpt_dir = Path(os.path.join(run_dir, 'checkpoints'))
         self.writer = SummaryWriter(log_dir=run_dir) if local_rank == 0 else None
         if local_rank == 0:
@@ -96,6 +102,8 @@ class UniMolPretrainTrainer:
         self.start_epoch = 0
         self.global_step = 0
         resume_path = resume
+        if resume_path is not None and not os.path.isabs(resume_path):
+            resume_path = os.path.join(run_dir, resume_path)
         if resume_path is None:
             last_ckpt = self.ckpt_dir / 'checkpoint_last.ckpt'
             if last_ckpt.exists():

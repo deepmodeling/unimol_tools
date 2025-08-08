@@ -75,6 +75,10 @@ class TrainingConfig:
     local_rank: int = 0
     seed: int = 42
     resume: Optional[str] = None
+    output_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Directory to save checkpoints and logs"},
+    )
 
 @dataclass
 class PretrainConfig:
