@@ -30,8 +30,10 @@ class MolPretrain:
         
         # Preprocess dataset if necessary
         ds_cfg = self.config.dataset
-        if ds_cfg.data_type != 'lmdb':
-            lmdb_path = ds_cfg.train_lmdb or os.path.splitext(ds_cfg.train_path)[0] + '.lmdb'
+        train_lmdb = ds_cfg.train_path
+        val_lmdb = ds_cfg.valid_path
+        if ds_cfg.data_type != 'lmdb' and not ds_cfg.train_path.endswith('.lmdb'):
+            lmdb_path = os.path.splitext(ds_cfg.train_path)[0] + '.lmdb'
             logger.info(
                 f"Preprocessing training data from {ds_cfg.train_path} to {lmdb_path}"
             )
@@ -40,15 +42,15 @@ class MolPretrain:
                 lmdb_path,
                 data_type=ds_cfg.data_type,
                 smiles_col=ds_cfg.smiles_column,
-                num_conf=ds_cfg.num_conformers if ds_cfg.unimol_style else 1,
-                unimol_style=ds_cfg.unimol_style,
+                num_conf=ds_cfg.num_conformers if ds_cfg.add_2d else 1,
+                add_2d=ds_cfg.add_2d,
                 remove_hs=ds_cfg.remove_hydrogen,
             )
-            ds_cfg.train_lmdb = lmdb_path
+            train_lmdb = lmdb_path
             logger.info(f"Dataset preprocessing finished, LMDB saved at {lmdb_path}")
 
             if ds_cfg.valid_path:
-                val_lmdb = ds_cfg.valid_lmdb or os.path.splitext(ds_cfg.valid_path)[0] + '.lmdb'
+                val_lmdb = os.path.splitext(ds_cfg.valid_path)[0] + '.lmdb'
                 logger.info(
                     f"Preprocessing validation data from {ds_cfg.valid_path} to {val_lmdb}"
                 )
@@ -57,11 +59,10 @@ class MolPretrain:
                     val_lmdb,
                     data_type=ds_cfg.data_type,
                     smiles_col=ds_cfg.smiles_column,
-                    num_conf=ds_cfg.num_conformers if ds_cfg.unimol_style else 1,
-                    unimol_style=ds_cfg.unimol_style,
+                    num_conf=ds_cfg.num_conformers if ds_cfg.add_2d else 1,
+                    add_2d=ds_cfg.add_2d,
                     remove_hs=ds_cfg.remove_hydrogen,
                 )
-                ds_cfg.valid_lmdb = val_lmdb
                 logger.info(
                     f"Validation dataset preprocessing finished, LMDB saved at {val_lmdb}"
                 )
@@ -73,12 +74,12 @@ class MolPretrain:
             self.dictionary = Dictionary.load(dict_path)
             logger.info(f"Loaded dictionary from {dict_path}")
         else:
-            self.dictionary = build_dictionary(ds_cfg.train_lmdb)
+            self.dictionary = build_dictionary(train_lmdb)
             logger.info("Built dictionary from training LMDB")
 
         # Build dataset
-        logger.info(f"Loading LMDB dataset from {ds_cfg.train_lmdb}")
-        lmdb_dataset = LMDBDataset(ds_cfg.train_lmdb)
+        logger.info(f"Loading LMDB dataset from {train_lmdb}")
+        lmdb_dataset = LMDBDataset(train_lmdb)
         self.dataset = UniMolDataset(
             lmdb_dataset,
             self.dictionary,
@@ -90,12 +91,12 @@ class MolPretrain:
             mask_prob=ds_cfg.mask_prob,
             leave_unmasked_prob=ds_cfg.leave_unmasked_prob,
             random_token_prob=ds_cfg.random_token_prob,
-            sample_conformer=ds_cfg.unimol_style,
+            sample_conformer=ds_cfg.add_2d,
         )
 
-        if ds_cfg.valid_lmdb:
-            logger.info(f"Loading validation LMDB dataset from {ds_cfg.valid_lmdb}")
-            val_lmdb_dataset = LMDBDataset(ds_cfg.valid_lmdb)
+        if val_lmdb:
+            logger.info(f"Loading validation LMDB dataset from {val_lmdb}")
+            val_lmdb_dataset = LMDBDataset(val_lmdb)
             self.valid_dataset = UniMolDataset(
                 val_lmdb_dataset,
                 self.dictionary,
@@ -107,7 +108,7 @@ class MolPretrain:
                 mask_prob=ds_cfg.mask_prob,
                 leave_unmasked_prob=ds_cfg.leave_unmasked_prob,
                 random_token_prob=ds_cfg.random_token_prob,
-                sample_conformer=ds_cfg.unimol_style,
+                sample_conformer=ds_cfg.add_2d,
             )
         else:
             self.valid_dataset = None
@@ -135,7 +136,7 @@ class MolPretrain:
             valid_dataset=self.valid_dataset,
         )
         logger.info("Starting pretraining")
-        trainer.train(epochs=self.config.training.epochs)
+        trainer.train(max_steps=self.config.training.total_steps)
         logger.info("Training finished. Checkpoints saved under the run directory.")
 
     def set_seed(self, seed):

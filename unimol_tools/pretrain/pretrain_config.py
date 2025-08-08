@@ -6,12 +6,16 @@ from hydra.core.config_store import ConfigStore
 
 @dataclass
 class DatasetConfig:
-    train_lmdb: Optional[str] = None
-    valid_lmdb: Optional[str] = None
-    train_path: Optional[str] = None
+    train_path: str = ""
     valid_path: Optional[str] = None
-    data_type: str = "lmdb"
-    smiles_column: str = "smi"
+    data_type: str = field(
+        default="lmdb",
+        metadata={"help": "Dataset format, e.g. 'lmdb', 'csv', 'txt', 'smi', or 'sdf'"},
+    )
+    smiles_column: str = field(
+        default="smi",
+        metadata={"help": "Column name for SMILES when reading csv data"},
+    )
     dict_path: Optional[str] = None
     remove_hydrogen: bool = False
     max_atoms: int = 256
@@ -20,7 +24,7 @@ class DatasetConfig:
     mask_prob: float = 0.15
     leave_unmasked_prob: float = 0.1
     random_token_prob: float = 0.1
-    unimol_style: bool = False
+    add_2d: bool = True
     num_conformers: int = 10
 
 @dataclass
@@ -50,8 +54,23 @@ class TrainingConfig:
     batch_size: int = 32
     lr: float = 1e-4
     weight_decay: float = 0.01
-    epochs: int = 10
-    save_every_n_epoch: int = 1
+    epochs: int = field(
+        default=0,
+        metadata={"help": "Number of epochs; 0 to disable and rely on total_steps"},
+    )
+    total_steps: int = field(
+        default=10000, metadata={"help": "Maximum number of training steps"}
+    )
+    log_every_n_steps: int = 10
+    save_every_n_steps: int = 100
+    keep_last_n_checkpoints: int = field(
+        default=3,
+        metadata={"help": "How many step checkpoints to keep"},
+    )
+    patience: int = field(
+        default=-1,
+        metadata={"help": "Early stop patience based on validation loss; -1 disables"},
+    )
     use_amp: bool = True
     local_rank: int = 0
     seed: int = 42
@@ -64,22 +83,20 @@ class PretrainConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
     def validate(self):
-        if self.dataset.data_type == "lmdb":
-            if not self.dataset.train_lmdb:
-                raise ValueError(
-                    "train_lmdb must be specified when data_type is 'lmdb'."
-                )
-        else:
-            if not self.dataset.train_path:
-                raise ValueError(
-                    "train_path must be specified when data_type is not 'lmdb'."
-                )
+        if not self.dataset.train_path:
+            raise ValueError("train_path must be specified in the dataset configuration.")
         if self.model.encoder_layers <= 0:
             raise ValueError("encoder_layers must be a positive integer.")
         if self.training.batch_size <= 0:
             raise ValueError("batch_size must be a positive integer.")
         if self.training.lr <= 0:
             raise ValueError("Learning rate must be a positive value.")
+        if self.training.total_steps <= 0:
+            raise ValueError("total_steps must be a positive integer.")
+        if self.training.keep_last_n_checkpoints <= 0:
+            raise ValueError("keep_last_n_checkpoints must be a positive integer.")
+        if self.training.patience < -1:
+            raise ValueError("patience must be -1 or non-negative.")
 
 cs = ConfigStore.instance()
 cs.store(name="pretrain_config", node=PretrainConfig)

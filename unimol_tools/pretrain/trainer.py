@@ -1,5 +1,6 @@
 import logging
 import os
+import math
 import random
 from pathlib import Path
 
@@ -48,6 +49,8 @@ class UniMolPretrainTrainer:
         self.criterion = nn.CrossEntropyLoss()
 
         self.best_loss = float("inf")
+        self.patience = getattr(config, "patience", -1)
+        self.no_improve_steps = 0
 
         # DDP DataLoader
         if 'WORLD_SIZE' in os.environ and int(os.environ['WORLD_SIZE']) > 1:
@@ -103,58 +106,117 @@ class UniMolPretrainTrainer:
         else:
             logger.info("No checkpoint found, starting from scratch.")
 
-    def train(self, epochs=None):
-        epochs = epochs or self.config.epochs
-        save_every = getattr(self.config, "save_every_n_epoch", 5)
+    def train(self, epochs=None, max_steps=None):
+        epochs = self.config.epochs if epochs is None else epochs
+        max_steps = max_steps or getattr(self.config, "total_steps", 0)
+        if epochs <= 0:
+            epochs = math.inf
+        log_every = getattr(self.config, "log_every_n_steps", 100)
+        save_every = getattr(self.config, "save_every_n_steps", 1000)
 
-        for epoch in range(self.start_epoch, epochs):
+        epoch = self.start_epoch
+        stop_training = False
+        while epoch < epochs and not stop_training:
             display_epoch = epoch + 1
             if self.sampler:
                 self.sampler.set_epoch(epoch)
             self.model.train()
             logger.info(f"Starting epoch {display_epoch}")
-            logging_infos = []
+            logger.info("Start iterating over samples")
+            step_logging_infos = []
+            epoch_logging_infos = []
+            num_batches = len(self.dataloader)
 
-            for i, batch in enumerate(self.dataloader):
+            for i, batch in enumerate(self.dataloader, start=1):
                 net_input, net_target = self.decorate_batch(batch)
                 loss, logging_info = self.loss_fn(self.model, net_input, net_target)
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-                logging_infos.append(logging_info)
+                step_logging_infos.append(logging_info)
+                epoch_logging_infos.append(logging_info)
                 self.global_step += 1
 
                 if self.writer:
-                    step_idx = epoch * len(self.dataloader) + i
-                    self.writer.add_scalar('Step/loss', loss.item(), step_idx)
+                    self.writer.add_scalar('Step/loss', loss.item(), self.global_step)
                     for key, value in logging_info.items():
                         if key == 'loss':
                             continue
-                        self.writer.add_scalar(f'Step/{key}', value, step_idx)
+                        self.writer.add_scalar(f'Step/{key}', value, self.global_step)
+
+                if log_every > 0 and self.global_step % log_every == 0 and self.local_rank == 0:
+                    self.reduce_metrics(
+                        step_logging_infos,
+                        writer=self.writer,
+                        logger=logger,
+                        step=self.global_step,
+                        split="train_inner",
+                        unit="Step",
+                        epoch=display_epoch,
+                        inner_step=i,
+                        inner_total=num_batches,
+                    )
+                    step_logging_infos = []
+
+                if max_steps and self.global_step >= max_steps:
+                    if self.local_rank == 0:
+                        logger.info(
+                            f"Reached max steps {max_steps}, stopping training"
+                        )
+                    stop_training = True
+                    break
+
+                if save_every > 0 and self.global_step % save_every == 0:
+                    val_metrics = None
+                    if self.valid_dataloader is not None:
+                        val_metrics = self.evaluate(self.global_step, log=self.local_rank == 0)
+                    if self.local_rank == 0:
+                        self._save_checkpoint(epoch, self.global_step, 'checkpoint_last.ckpt')
+                        if self.valid_dataloader is not None and val_metrics is not None:
+                            curr_loss = val_metrics.get('loss', float('inf'))
+                            if curr_loss < self.best_loss:
+                                self.best_loss = curr_loss
+                                self.no_improve_steps = 0
+                                logger.info(
+                                    f"New best model at step {self.global_step} with loss {curr_loss:.4f}"
+                                )
+                                self._save_checkpoint(epoch, self.global_step, 'checkpoint_best.ckpt')
+                            else:
+                                self.no_improve_steps += 1
+                                if (
+                                    self.patience >= 0
+                                    and self.no_improve_steps > self.patience
+                                ):
+                                    logger.info(
+                                        f"Early stopping triggered at step {self.global_step}"
+                                    )
+                                    stop_training = True
+                        self._save_checkpoint(epoch, self.global_step)
+                    if stop_training:
+                        break
 
             if self.local_rank == 0:
-                self.reduce_metrics(logging_infos, writer=self.writer, logger=logger, epoch=display_epoch, split="train")
+                logger.info(
+                    f"End of epoch {display_epoch} (average epoch stats below)"
+                )
+                self.reduce_metrics(
+                    epoch_logging_infos,
+                    writer=self.writer,
+                    logger=logger,
+                    step=display_epoch,
+                    split="train",
+                    unit="Epoch",
+                )
+            epoch += 1
 
-            should_save = display_epoch % save_every == 0
-            val_metrics = None
-            if self.valid_dataloader is not None:
-                log_val = should_save
-                val_metrics = self.evaluate(display_epoch, log=log_val)
-
-            if self.local_rank == 0 and should_save:
-                self._save_checkpoint(epoch, 'checkpoint_last.ckpt')
-                if self.valid_dataloader is not None and val_metrics is not None:
-                    curr_loss = val_metrics.get('loss', float('inf'))
-                    if curr_loss < self.best_loss:
-                        self.best_loss = curr_loss
-                        logger.info(f"New best model at epoch {display_epoch} with loss {curr_loss:.4f}")
-                        self._save_checkpoint(epoch, 'checkpoint_best.ckpt')
-                self._save_checkpoint(epoch, display_epoch)
+        final_epoch = epoch - 1
+        if self.local_rank == 0:
+            self._save_checkpoint(final_epoch, self.global_step, 'checkpoint_last.ckpt')
 
         if self.writer:
             self.writer.close()
 
-    def _save_checkpoint(self, epoch, name=None):
+    def _save_checkpoint(self, epoch, step, name=None):
         if self.local_rank != 0:
             return
         ckpt = {
@@ -163,17 +225,17 @@ class UniMolPretrainTrainer:
                      else self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "epoch": epoch,
-            "step": self.global_step,
+            "step": step,
         }
-        if isinstance(name, int):
-            save_name = f'epoch_{name}.ckpt'
+        if name is None:
+            save_name = f"checkpoint_{epoch+1}_{step}.ckpt"
         else:
             save_name = name
         save_path = os.path.join(self.ckpt_dir, save_name)
         torch.save(ckpt, save_path)
         logger.info(f"Saved checkpoint: {save_path}")
-        if isinstance(name, int):
-            self._cleanup_old_checkpoints(keep=3)
+        if name is None:
+            self._cleanup_old_checkpoints()
 
     def _load_checkpoint(self, ckpt_path: str):
         map_loc = {"cuda:%d" % 0: "cuda:%d" % self.local_rank} if self.local_rank >= 0 else None
@@ -188,12 +250,15 @@ class UniMolPretrainTrainer:
         self.global_step = ckpt["step"]
         logger.info(f"Resume from {ckpt_path} | start_epoch={self.start_epoch} step={self.global_step}")
 
-    def _cleanup_old_checkpoints(self, keep: int = 3):
-        epoch_files = sorted(self.ckpt_dir.glob("epoch_*.ckpt"), key=lambda p: int(p.stem.split("_")[1]))
-        for f in epoch_files[:-keep]:
+    def _cleanup_old_checkpoints(self, keep: int = None):
+        keep = keep if keep is not None else getattr(self.config, 'keep_last_n_checkpoints', 3)
+        ckpt_files = sorted(
+            self.ckpt_dir.glob("checkpoint_*_*.ckpt"), key=os.path.getmtime
+        )
+        for f in ckpt_files[:-keep]:
             f.unlink()
             
-    def evaluate(self, epoch, log: bool = False):
+    def evaluate(self, step, log: bool = False):
         self.model.eval()
         logging_infos = []
         with torch.no_grad():
@@ -205,8 +270,9 @@ class UniMolPretrainTrainer:
             logging_infos,
             writer=self.writer,
             logger=logger if log else None,
-            epoch=epoch,
+            step=step,
             split="valid",
+            unit="Step",
         )
         self.model.train()
         return metrics
@@ -228,26 +294,31 @@ class UniMolPretrainTrainer:
         return net_input, net_target
 
     @staticmethod
-    def reduce_metrics(logging_outputs, writer=None, logger=None, epoch=None, split="Epoch"):
+    def reduce_metrics(
+        logging_outputs,
+        writer=None,
+        logger=None,
+        step=None,
+        split="train",
+        unit="Epoch",
+        epoch=None,
+        inner_step=None,
+        inner_total=None,
+    ):
         # Aggregate metrics from all logging outputs
         agg = {}
         for log in logging_outputs:
             for k, v in log.items():
-                if k not in agg:
-                    agg[k] = []
-                agg[k].append(v)
-        # Calculate mean for each metric
-        metrics_mean = {k: (sum(v)/len(v) if len(v)>0 else 0) for k, v in agg.items()}
-        # Log metrics to writer and logger
-        if writer is not None and epoch is not None:
+                agg.setdefault(k, []).append(v)
+        metrics_mean = {k: (sum(v) / len(v) if len(v) > 0 else 0) for k, v in agg.items()}
+        if writer is not None and step is not None:
             if 'loss' in metrics_mean:
-                writer.add_scalar(f"{split}/loss", metrics_mean['loss'], epoch)
+                writer.add_scalar(f"{split}/loss", metrics_mean['loss'], step)
             for k, v in metrics_mean.items():
                 if k == 'loss':
                     continue
-                writer.add_scalar(f"{split}/{k}", v, epoch)
-        if logger is not None and epoch is not None:
-            # Put loss first, others follow original order
+                writer.add_scalar(f"{split}/{k}", v, step)
+        if logger is not None and step is not None:
             log_items = []
             if 'loss' in metrics_mean:
                 v = metrics_mean['loss']
@@ -256,7 +327,18 @@ class UniMolPretrainTrainer:
                 if k == 'loss':
                     continue
                 log_items.append(f"{k}={v:.4f}")
-            logger.info(f"[{split}] Epoch {epoch}: " + ", ".join(log_items))
+            if (
+                split == "train_inner"
+                and epoch is not None
+                and inner_step is not None
+                and inner_total is not None
+            ):
+                logger.info(
+                    f"[{split}] step {step}, epoch {epoch:03d}: {inner_step:6d} / {inner_total}: "
+                    + ", ".join(log_items)
+                )
+            else:
+                logger.info(f"[{split}] {unit} {step}: " + ", ".join(log_items))
         return metrics_mean
 
 def seed_worker(worker_id):

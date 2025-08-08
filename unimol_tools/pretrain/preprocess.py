@@ -49,7 +49,7 @@ def build_dictionary(lmdb_path, save_path=None):
         np.savetxt(f, dictionary, fmt='%s')
     return Dictionary.from_list(dictionary)
 
-def write_to_lmdb(lmdb_path, smi_list, num_conf=1, unimol_style=False, remove_hs=False):
+def write_to_lmdb(lmdb_path, smi_list, num_conf=10, add_2d=True, remove_hs=False):
     logger.info(f"Writing {len(smi_list)} SMILES to {lmdb_path}")
 
     env = lmdb.open(
@@ -69,7 +69,7 @@ def write_to_lmdb(lmdb_path, smi_list, num_conf=1, unimol_style=False, remove_hs
             i,
             remove_hs=remove_hs,
             num_conf=num_conf,
-            unimol_style=unimol_style,
+            add_2d=add_2d,
         )
         if inner_output is not None:
             idx, data = inner_output
@@ -124,9 +124,9 @@ def smi2_2dcoords(smiles):
     assert len(mol.GetAtoms()) == len(coordinates)
     return coordinates
 
-def process_smi(smi, idx, remove_hs=False, num_conf=1, unimol_style=False, **params):
+def process_smi(smi, idx, remove_hs=False, num_conf=10, add_2d=True, **params):
     """Process a single SMILES string and return index and serialized data."""
-    if unimol_style:
+    if add_2d:
         conformers = []
         for i in range(num_conf):
             atoms, coordinates, _ = inner_smi2coords(
@@ -184,7 +184,7 @@ def process_sdf_file(file_path, remove_hs=False):
     return mols
 
 def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
-                       num_conf=1, unimol_style=False, remove_hs=False):
+                       num_conf=10, add_2d=True, remove_hs=False):
     """Preprocess various dataset formats into an LMDB file.
 
     Args:
@@ -204,7 +204,7 @@ def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
             lmdb_path,
             smi_list,
             num_conf=num_conf,
-            unimol_style=unimol_style,
+            add_2d=add_2d,
             remove_hs=remove_hs,
         )
     elif data_type == 'csv':
@@ -214,7 +214,7 @@ def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
             lmdb_path,
             smi_list,
             num_conf=num_conf,
-            unimol_style=unimol_style,
+            add_2d=add_2d,
             remove_hs=remove_hs,
         )
     elif data_type == 'sdf':
@@ -228,7 +228,7 @@ def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
             lmdb_path,
             smi_list,
             num_conf=num_conf,
-            unimol_style=unimol_style,
+            add_2d=add_2d,
             remove_hs=remove_hs,
         )
     else:
