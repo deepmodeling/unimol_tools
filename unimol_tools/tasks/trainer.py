@@ -475,7 +475,7 @@ class Trainer(object):
 
     def _compute_loss(self, model, net_input, net_target, loss_func):
         if self.scaler and self.device.type == 'cuda':
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast("cuda"):
                 outputs = model(**net_input)
                 loss = loss_func(outputs, net_target)
         else:

@@ -13,11 +13,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from addict import Dict
+import numpy as np
 
 from ..config import MODEL_CONFIG
 from ..data import Dictionary
 from ..utils import logger, pad_1d_tokens, pad_2d, pad_coords
-from ..weights import WEIGHT_DIR, weight_download
+from ..weights import get_weight_dir, weight_download
 from .transformers import TransformerEncoderWithPair
 
 BACKBONE = {
@@ -72,13 +73,14 @@ class UniMolModel(nn.Module):
             name = data_type + '_' + name
         else:
             name = data_type
-        if not os.path.exists(os.path.join(WEIGHT_DIR, MODEL_CONFIG['weight'][name])):
-            weight_download(MODEL_CONFIG['weight'][name], WEIGHT_DIR)
-        if not os.path.exists(os.path.join(WEIGHT_DIR, MODEL_CONFIG['dict'][name])):
-            weight_download(MODEL_CONFIG['dict'][name], WEIGHT_DIR)
-        self.pretrain_path = os.path.join(WEIGHT_DIR, MODEL_CONFIG['weight'][name])
+        weight_dir = get_weight_dir()
+        if not os.path.exists(os.path.join(weight_dir, MODEL_CONFIG['weight'][name])):
+            weight_download(MODEL_CONFIG['weight'][name], weight_dir)
+        if not os.path.exists(os.path.join(weight_dir, MODEL_CONFIG['dict'][name])):
+            weight_download(MODEL_CONFIG['dict'][name], weight_dir)
+        self.pretrain_path = os.path.join(weight_dir, MODEL_CONFIG['weight'][name])
         self.dictionary = Dictionary.load(
-            os.path.join(WEIGHT_DIR, MODEL_CONFIG['dict'][name])
+            os.path.join(weight_dir, MODEL_CONFIG['dict'][name])
         )
         self.mask_idx = self.dictionary.add_symbol("[MASK]", is_special=True)
         self.padding_idx = self.dictionary.pad()
@@ -285,7 +287,7 @@ class UniMolModel(nn.Module):
                 )
             batch[k] = v
         try:
-            label = torch.tensor([s[1] for s in samples])
+            label = torch.tensor(np.array([s[1] for s in samples]))
         except:
             label = None
         return batch, label

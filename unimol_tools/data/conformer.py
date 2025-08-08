@@ -27,7 +27,7 @@ from tqdm import tqdm
 
 from ..config import MODEL_CONFIG
 from ..utils import logger
-from ..weights import WEIGHT_DIR, weight_download
+from ..weights import get_weight_dir, weight_download
 from .dictionary import Dictionary
 
 # https://github.com/snap-stanford/ogb/blob/master/ogb/utils/features.py
@@ -100,9 +100,10 @@ class ConformerGen(object):
             self.dict_name = MODEL_CONFIG['dict'][name]
         else:
             self.dict_name = MODEL_CONFIG['dict'][self.data_type]
-        if not os.path.exists(os.path.join(WEIGHT_DIR, self.dict_name)):
-            weight_download(self.dict_name, WEIGHT_DIR)
-        self.dictionary = Dictionary.load(os.path.join(WEIGHT_DIR, self.dict_name))
+        weight_dir = get_weight_dir()
+        if not os.path.exists(os.path.join(weight_dir, self.dict_name)):
+            weight_download(self.dict_name, weight_dir)
+        self.dictionary = Dictionary.load(os.path.join(weight_dir, self.dict_name))
         self.dictionary.add_symbol("[MASK]", is_special=True)
         if os.name == 'posix':
             self.multi_process = params.get('multi_process', True)
