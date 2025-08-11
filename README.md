@@ -81,11 +81,14 @@ export UNIMOL_WEIGHT_DIR=/path/to/your/weights/dir/
 ### Molecule property prediction
 ```python
 from unimol_tools import MolTrain, MolPredict
-clf = MolTrain(task='classification', 
-                data_type='molecule', 
-                epochs=10, 
-                batch_size=16, 
+clf = MolTrain(task='classification',
+                data_type='molecule',
+                epochs=10,
+                batch_size=16,
                 metrics='auc',
+                # use custom pretraining weights
+                pretrained_model_path='/path/to/checkpoint.ckpt',
+                pretrained_dict_path='/path/to/dict.txt',
                 )
 clf.fit(data = train_data)
 # currently support data with smiles based csv/txt file, and
@@ -98,8 +101,14 @@ res = clf.predict(data = test_data)
 ```python
 import numpy as np
 from unimol_tools import UniMolRepr
-# single smiles unimol representation
-clf = UniMolRepr(data_type='molecule', remove_hs=False)
+# single smiles unimol representation. Pretrained weights can be provided
+# via ``pretrained_model_path`` and ``pretrained_dict_path``.
+clf = UniMolRepr(
+    data_type='molecule',
+    remove_hs=False,
+    pretrained_model_path='/path/to/checkpoint.ckpt',
+    pretrained_dict_path='/path/to/dict.txt',
+)
 smiles = 'c1ccc(cc1)C2=NCC(=O)Nc3c2cc(cc3)[N+](=O)[O]'
 smiles_list = [smiles]
 unimol_repr = clf.get_repr(smiles_list, return_atomic_reprs=True)

@@ -47,7 +47,7 @@ class UniMolDataset(Dataset):
     """
     Loads LMDBDataset for UniMol models.
     """
-    def __init__(self, lmdb_dataset, dictionary, remove_hs=False, max_atoms=256, seed=1, sample_conformer=False, **params):
+    def __init__(self, lmdb_dataset, dictionary, remove_hs=False, max_atoms=256, seed=1, sample_conformer=True, **params):
         self.dataset = lmdb_dataset
         self.length = len(self.dataset)
         self.dictionary = dictionary

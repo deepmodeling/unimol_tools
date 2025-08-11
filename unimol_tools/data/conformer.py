@@ -94,16 +94,24 @@ class ConformerGen(object):
         self.method = params.get('method', 'rdkit_random')
         self.mode = params.get('mode', 'fast')
         self.remove_hs = params.get('remove_hs', False)
-        if self.data_type == 'molecule':
-            name = "no_h" if self.remove_hs else "all_h"
-            name = self.data_type + '_' + name
-            self.dict_name = MODEL_CONFIG['dict'][name]
+        # allow using a custom token dictionary to avoid unnecessary downloads
+        dict_path = params.get('pretrained_dict_path', None)
+        if dict_path is not None:
+            # load dictionary from user-provided path
+            self.dictionary = Dictionary.load(dict_path)
         else:
-            self.dict_name = MODEL_CONFIG['dict'][self.data_type]
-        weight_dir = get_weight_dir()
-        if not os.path.exists(os.path.join(weight_dir, self.dict_name)):
-            weight_download(self.dict_name, weight_dir)
-        self.dictionary = Dictionary.load(os.path.join(weight_dir, self.dict_name))
+            if self.data_type == 'molecule':
+                name = "no_h" if self.remove_hs else "all_h"
+                name = self.data_type + '_' + name
+                self.dict_name = MODEL_CONFIG['dict'][name]
+            else:
+                self.dict_name = MODEL_CONFIG['dict'][self.data_type]
+            weight_dir = get_weight_dir()
+            if not os.path.exists(os.path.join(weight_dir, self.dict_name)):
+                weight_download(self.dict_name, weight_dir)
+            self.dictionary = Dictionary.load(
+                os.path.join(weight_dir, self.dict_name)
+            )
         self.dictionary.add_symbol("[MASK]", is_special=True)
         if os.name == 'posix':
             self.multi_process = params.get('multi_process', True)

@@ -49,12 +49,20 @@ class UniMolV2Model(nn.Module):
         - classification_head: The final classification head of the model.
     """
 
-    def __init__(self, output_dim=2, model_size='84m', **params):
-        """
-        Initializes the UniMolModel with specified parameters and data type.
+    def __init__(
+        self,
+        output_dim=2,
+        model_size='84m',
+        pretrained_model_path=None,
+        **params,
+    ):
+        """Initializes the UniMolModel with specified parameters and data type.
 
         :param output_dim: (int) The number of output dimensions (classes).
-        :param data_type: (str) The type of data (e.g., 'molecule', 'protein').
+        :param model_size: (str) The size identifier for UniMolV2.
+        :param pretrained_model_path: (str, optional) Path to a custom
+            pretrained model checkpoint. If ``None`` the default weights shipped
+            with ``unimol_tools`` will be used.
         :param params: Additional parameters for model configuration.
         """
         super().__init__()
@@ -65,13 +73,18 @@ class UniMolV2Model(nn.Module):
         self.remove_hs = params.get('remove_hs', False)
 
         name = model_size
-        weight_dir = get_weight_dir()
-        if not os.path.exists(
-            os.path.join(weight_dir, MODEL_CONFIG_V2['weight'][name])
-        ):
-            weight_download_v2(MODEL_CONFIG_V2['weight'][name], weight_dir)
+        if pretrained_model_path is not None:
+            self.pretrain_path = pretrained_model_path
+        else:
+            weight_dir = get_weight_dir()
+            if not os.path.exists(
+                os.path.join(weight_dir, MODEL_CONFIG_V2['weight'][name])
+            ):
+                weight_download_v2(MODEL_CONFIG_V2['weight'][name], weight_dir)
 
-        self.pretrain_path = os.path.join(weight_dir, MODEL_CONFIG_V2['weight'][name])
+            self.pretrain_path = os.path.join(
+                weight_dir, MODEL_CONFIG_V2['weight'][name]
+            )
 
         self.token_num = 128
         self.padding_idx = 0
