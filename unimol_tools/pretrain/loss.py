@@ -21,6 +21,8 @@ class UniMolLoss(nn.Module):
         masked_dist_loss=10,
         x_norm_loss=0.01,
         delta_pair_repr_norm_loss=0.01,
+        dist_mean=6.312581655060595,
+        dist_std=3.3899264663911888,
     ):
         super().__init__()
         self.padding_idx = dictionary.pad()
@@ -30,8 +32,8 @@ class UniMolLoss(nn.Module):
         self.x_norm_loss = x_norm_loss
         self.delta_pair_repr_norm_loss = delta_pair_repr_norm_loss
         # statistics used for distance normalization
-        self.dist_mean = 6.312581655060595
-        self.dist_std = 3.3899264663911888
+        self.dist_mean = dist_mean
+        self.dist_std = dist_std
 
     def forward(self, model, net_input, net_target):
         tgt_tokens = net_target["tgt_tokens"]

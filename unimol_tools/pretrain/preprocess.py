@@ -15,6 +15,31 @@ from unimol_tools.data.conformer import inner_smi2coords
 logger = logging.getLogger(__name__)
 
 
+def _accum_dist_stats(coords):
+    """Compute sum and squared sum of pairwise distances for given coordinates."""
+    if isinstance(coords, list):
+        coord_list = coords
+    else:
+        coord_list = [coords]
+    dist_sum = 0.0
+    dist_sq_sum = 0.0
+    dist_cnt = 0
+    for c in coord_list:
+        if c is None:
+            continue
+        arr = np.asarray(c, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] != 3:
+            continue
+        diff = arr[:, None, :] - arr[None, :, :]
+        dist = np.linalg.norm(diff, axis=-1)
+        iu = np.triu_indices(len(arr), k=1)
+        vals = dist[iu]
+        dist_sum += vals.sum()
+        dist_sq_sum += (vals ** 2).sum()
+        dist_cnt += vals.size
+    return dist_sum, dist_sq_sum, dist_cnt
+
+
 def build_dictionary(lmdb_path, save_path=None):
     """
     Count all element types and return a dictionary list with special tokens.
@@ -63,6 +88,9 @@ def write_to_lmdb(lmdb_path, smi_list, num_conf=10, add_2d=True, remove_hs=False
         map_size=int(100e9),  # 100GB
     )
     txn_write = env.begin(write=True)
+    dist_sum_total = 0.0
+    dist_sq_sum_total = 0.0
+    dist_cnt_total = 0
     for i in tqdm(range(len(smi_list)), total=len(smi_list)):
         inner_output = process_smi(
             smi_list[i],
@@ -72,16 +100,29 @@ def write_to_lmdb(lmdb_path, smi_list, num_conf=10, add_2d=True, remove_hs=False
             add_2d=add_2d,
         )
         if inner_output is not None:
-            idx, data = inner_output
+            idx, data, dsum, dsqsum, dcnt = inner_output
             txn_write.put(str(idx).encode(), data)
+            dist_sum_total += dsum
+            dist_sq_sum_total += dsqsum
+            dist_cnt_total += dcnt
         if (i + 1) % 1000 == 0:
             txn_write.commit()
             txn_write = env.begin(write=True)
     logger.info(f"Processed {i+1} molecules")
     txn_write.commit()
     env.close()
-    logger.info(f"Saved to LMDB: {lmdb_path}")
-    return lmdb_path
+    dist_mean = (
+        dist_sum_total / dist_cnt_total if dist_cnt_total > 0 else 0.0
+    )
+    dist_std = (
+        np.sqrt(dist_sq_sum_total / dist_cnt_total - dist_mean ** 2)
+        if dist_cnt_total > 0
+        else 1.0
+    )
+    logger.info(
+        f"Saved to LMDB: {lmdb_path} (dist_mean={dist_mean:.6f}, dist_std={dist_std:.6f})"
+    )
+    return lmdb_path, dist_mean, dist_std
 
 def write_dicts_to_lmdb(lmdb_path, mol_list):
     """Write a list of pre-generated molecules to LMDB."""
@@ -98,6 +139,9 @@ def write_dicts_to_lmdb(lmdb_path, mol_list):
         map_size=int(100e9),
     )
     txn_write = env.begin(write=True)
+    dist_sum_total = 0.0
+    dist_sq_sum_total = 0.0
+    dist_cnt_total = 0
     for i, item in enumerate(tqdm(mol_list, total=len(mol_list))):
         data = {
             "idx": i,
@@ -107,14 +151,28 @@ def write_dicts_to_lmdb(lmdb_path, mol_list):
         if "smi" in item:
             data["smi"] = item["smi"]
         txn_write.put(str(i).encode(), pickle.dumps(data))
+        dsum, dsqsum, dcnt = _accum_dist_stats(item["coordinates"])
+        dist_sum_total += dsum
+        dist_sq_sum_total += dsqsum
+        dist_cnt_total += dcnt
         if (i + 1) % 1000 == 0:
             txn_write.commit()
             txn_write = env.begin(write=True)
     logger.info(f"Processed {i+1} molecules")
     txn_write.commit()
     env.close()
-    logger.info(f"Saved to LMDB: {lmdb_path}")
-    return lmdb_path
+    dist_mean = (
+        dist_sum_total / dist_cnt_total if dist_cnt_total > 0 else 0.0
+    )
+    dist_std = (
+        np.sqrt(dist_sq_sum_total / dist_cnt_total - dist_mean ** 2)
+        if dist_cnt_total > 0
+        else 1.0
+    )
+    logger.info(
+        f"Saved to LMDB: {lmdb_path} (dist_mean={dist_mean:.6f}, dist_std={dist_std:.6f})"
+    )
+    return lmdb_path, dist_mean, dist_std
 
 def smi2_2dcoords(smiles):
     mol = Chem.MolFromSmiles(smiles)
@@ -151,7 +209,9 @@ def process_smi(smi, idx, remove_hs=False, num_conf=10, add_2d=True, **params):
             "smi": smi,
         }
 
-    return idx, pickle.dumps(data)
+    dsum, dsqsum, dcnt = _accum_dist_stats(data["coordinates"])
+
+    return idx, pickle.dumps(data), dsum, dsqsum, dcnt
 
 def process_csv(csv_path, smiles_col='smi'):
     """
@@ -234,4 +294,41 @@ def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
     else:
         raise ValueError(f"Unsupported data_type: {data_type}")
 
-
+def compute_lmdb_dist_stats(lmdb_path):
+    """Compute distance mean and std from an existing LMDB dataset."""
+    env = lmdb.open(
+        lmdb_path,
+        subdir=False,
+        readonly=True,
+        lock=False,
+        readahead=False,
+        meminit=False,
+        max_readers=256,
+    )
+    txn = env.begin()
+    length = txn.stat()['entries']
+    dist_sum_total = 0.0
+    dist_sq_sum_total = 0.0
+    dist_cnt_total = 0
+    for idx in range(length):
+        data = txn.get(str(idx).encode())
+        if data is None:
+            continue
+        item = pickle.loads(data)
+        dsum, dsqsum, dcnt = _accum_dist_stats(item.get("coordinates"))
+        dist_sum_total += dsum
+        dist_sq_sum_total += dsqsum
+        dist_cnt_total += dcnt
+    env.close()
+    dist_mean = (
+        dist_sum_total / dist_cnt_total if dist_cnt_total > 0 else 0.0
+    )
+    dist_std = (
+        np.sqrt(dist_sq_sum_total / dist_cnt_total - dist_mean ** 2)
+        if dist_cnt_total > 0
+        else 1.0
+    )
+    logger.info(
+        f"dist_mean={dist_mean:.6f}, dist_std={dist_std:.6f}"
+    )
+    return dist_mean, dist_std

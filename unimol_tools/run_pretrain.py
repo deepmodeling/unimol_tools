@@ -15,6 +15,7 @@ from unimol_tools.pretrain import (
     UniMolPretrainTrainer,
     build_dictionary,
     preprocess_dataset,
+    compute_lmdb_dist_stats,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,12 +33,14 @@ class MolPretrain:
         ds_cfg = self.config.dataset
         train_lmdb = ds_cfg.train_path
         val_lmdb = ds_cfg.valid_path
+        self.dist_mean = None
+        self.dist_std = None
         if ds_cfg.data_type != 'lmdb' and not ds_cfg.train_path.endswith('.lmdb'):
             lmdb_path = os.path.splitext(ds_cfg.train_path)[0] + '.lmdb'
             logger.info(
                 f"Preprocessing training data from {ds_cfg.train_path} to {lmdb_path}"
             )
-            preprocess_dataset(
+            lmdb_path, self.dist_mean, self.dist_std = preprocess_dataset(
                 ds_cfg.train_path,
                 lmdb_path,
                 data_type=ds_cfg.data_type,
@@ -47,7 +50,9 @@ class MolPretrain:
                 remove_hs=ds_cfg.remove_hydrogen,
             )
             train_lmdb = lmdb_path
-            logger.info(f"Dataset preprocessing finished, LMDB saved at {lmdb_path}")
+            logger.info(
+                f"Dataset preprocessing finished, LMDB saved at {lmdb_path}"
+            )
 
             if ds_cfg.valid_path:
                 val_lmdb = os.path.splitext(ds_cfg.valid_path)[0] + '.lmdb'
@@ -66,6 +71,9 @@ class MolPretrain:
                 logger.info(
                     f"Validation dataset preprocessing finished, LMDB saved at {val_lmdb}"
                 )
+        else:
+            if train_lmdb:
+                self.dist_mean, self.dist_std = compute_lmdb_dist_stats(train_lmdb)
 
         # Build dictionary
         dict_path = ds_cfg.get('dict_path', None)
@@ -124,6 +132,8 @@ class MolPretrain:
             masked_dist_loss=self.config.model.masked_dist_loss,
             x_norm_loss=self.config.model.x_norm_loss,
             delta_pair_repr_norm_loss=self.config.model.delta_pair_repr_norm_loss,
+            dist_mean=self.dist_mean,
+            dist_std=self.dist_std,
         )
         # Build trainer
         trainer = UniMolPretrainTrainer(
