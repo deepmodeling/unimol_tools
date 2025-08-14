@@ -1,6 +1,7 @@
 import os
 import random
 import logging
+import shutil
 
 import hydra
 import numpy as np
@@ -80,9 +81,11 @@ class MolPretrain:
         if dict_path:
             from unimol_tools.data.dictionary import Dictionary
             self.dictionary = Dictionary.load(dict_path)
+            self.dict_path = dict_path
             logger.info(f"Loaded dictionary from {dict_path}")
         else:
             self.dictionary = build_dictionary(train_lmdb)
+            self.dict_path = os.path.join(os.path.dirname(train_lmdb), 'dictionary.txt')
             logger.info("Built dictionary from training LMDB")
 
         # Build dataset
@@ -145,6 +148,13 @@ class MolPretrain:
             resume=self.config.training.get('resume', None),
             valid_dataset=self.valid_dataset,
         )
+        if self.local_rank == 0 and getattr(self, 'dict_path', None):
+            try:
+                dst_path = os.path.join(trainer.ckpt_dir, os.path.basename(self.dict_path))
+                shutil.copy(self.dict_path, dst_path)
+                logger.info(f"Copied dictionary file to {dst_path}")
+            except Exception as e:
+                logger.warning(f"Failed to copy dictionary file: {e}")
         logger.info("Starting pretraining")
         trainer.train(max_steps=self.config.training.total_steps)
         logger.info("Training finished. Checkpoints saved under the run directory.")
