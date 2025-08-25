@@ -139,6 +139,8 @@ class UniMolPretrainTrainer:
             display_epoch = epoch + 1
             if self.sampler:
                 self.sampler.set_epoch(epoch)
+            if hasattr(self.dataset, "set_epoch"):
+                self.dataset.set_epoch(epoch)
             self.model.train()
             logger.info(f"Starting epoch {display_epoch}")
             logger.info("Start iterating over samples")
