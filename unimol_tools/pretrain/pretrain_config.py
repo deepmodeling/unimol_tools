@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Tuple
 
 from hydra.core.config_store import ConfigStore
 
@@ -19,11 +19,11 @@ class DatasetConfig:
     dict_path: Optional[str] = None
     remove_hydrogen: bool = False
     max_atoms: int = 256
-    noise_type: str = "trunc_normal"
-    noise: float = 0.1
+    noise_type: str = "uniform"
+    noise: float = 1.0
     mask_prob: float = 0.15
-    leave_unmasked_prob: float = 0.1
-    random_token_prob: float = 0.1
+    leave_unmasked_prob: float = 0.05
+    random_token_prob: float = 0.05
     add_2d: bool = True
     num_conformers: int = 10
 
@@ -53,13 +53,20 @@ class ModelConfig:
 class TrainingConfig:
     batch_size: int = 32
     lr: float = 1e-4
-    weight_decay: float = 0.01
+    weight_decay: float = 1e-4
+    adam_betas: Tuple[float, float] = (0.9, 0.99)
+    adam_eps: float = 1e-6
+    clip_grad_norm: float = 1.0
     epochs: int = field(
         default=0,
         metadata={"help": "Number of epochs; 0 to disable and rely on total_steps"},
     )
     total_steps: int = field(
         default=10000, metadata={"help": "Maximum number of training steps"}
+    )
+    warmup_steps: int = field(
+        default=1000,
+        metadata={"help": "Number of steps to linearly warm up the learning rate"},
     )
     log_every_n_steps: int = 10
     save_every_n_steps: int = 100

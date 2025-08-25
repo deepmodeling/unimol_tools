@@ -9,11 +9,13 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
+from torch.nn.utils import clip_grad_norm_
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import get_original_cwd
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from unimol_tools.tasks.trainer import get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,16 @@ class UniMolPretrainTrainer:
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=self.config.lr,
+            betas=getattr(self.config, "adam_betas", (0.9, 0.99)),
+            eps=getattr(self.config, "adam_eps", 1e-6),
             weight_decay=self.config.weight_decay,
+        )
+        self.scheduler = None
+        warmup_steps = getattr(config, "warmup_steps", 0)
+        total_steps = getattr(config, "total_steps", 0)
+        if warmup_steps > 0 and total_steps > 0:
+            self.scheduler = get_linear_schedule_with_warmup(
+                self.optimizer, warmup_steps, total_steps
             )
         self.criterion = nn.CrossEntropyLoss()
 
@@ -140,7 +151,12 @@ class UniMolPretrainTrainer:
                 loss, logging_info = self.loss_fn(self.model, net_input, net_target)
                 self.optimizer.zero_grad()
                 loss.backward()
+                clip_val = getattr(self.config, "clip_grad_norm", 0)
+                if clip_val and clip_val > 0:
+                    clip_grad_norm_(self.model.parameters(), clip_val)
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
                 step_logging_infos.append(logging_info)
                 epoch_logging_infos.append(logging_info)
                 self.global_step += 1
@@ -235,6 +251,8 @@ class UniMolPretrainTrainer:
             "epoch": epoch,
             "step": step,
         }
+        if self.scheduler is not None:
+            ckpt["scheduler"] = self.scheduler.state_dict()
         if name is None:
             save_name = f"checkpoint_{epoch+1}_{step}.ckpt"
         else:
@@ -254,6 +272,8 @@ class UniMolPretrainTrainer:
         else:
             self.model.load_state_dict(model_sd)
         self.optimizer.load_state_dict(ckpt["optimizer"])
+        if self.scheduler is not None and ckpt.get("scheduler") is not None:
+            self.scheduler.load_state_dict(ckpt["scheduler"])
         self.start_epoch = ckpt["epoch"] + 1
         self.global_step = ckpt["step"]
         logger.info(f"Resume from {ckpt_path} | start_epoch={self.start_epoch} step={self.global_step}")
