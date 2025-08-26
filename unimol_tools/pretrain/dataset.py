@@ -96,13 +96,13 @@ class UniMolDataset(Dataset):
             coordinates=coordinates, 
             dictionary=self.dictionary, 
             mask_id=self.mask_id,
-            noise_type=self.params.get('noise_type', 'trunc_normal'),
+            noise_type=self.params.get('noise_type', 'uniform'),
             noise=self.params.get('noise', 1.0),
             seed=self.params.get('seed', 1),
             epoch=epoch,
             mask_prob=self.params.get('mask_prob', 0.15),
-            leave_unmasked_prob=self.params.get('leave_unmasked_prob', 0.1),
-            random_token_prob=self.params.get('random_token_prob', 0.1),
+            leave_unmasked_prob=self.params.get('leave_unmasked_prob', 0.05),
+            random_token_prob=self.params.get('random_token_prob', 0.05),
             max_atoms=self.max_atoms,
             remove_hs=self.remove_hs,
         )
@@ -118,8 +118,8 @@ def coords2unimol(
         seed=1,
         epoch=0,
         mask_prob=0.15,
-        leave_unmasked_prob=0.1,
-        random_token_prob=0.1,
+        leave_unmasked_prob=0.05,
+        random_token_prob=0.05,
         max_atoms=256, 
         remove_hs=True, 
         **params
@@ -195,8 +195,8 @@ def apply_noise_and_mask(
         noise_type, 
         noise=1.0, 
         mask_prob=0.15, 
-        leave_unmasked_prob=0.1, 
-        random_token_prob=0.1
+        leave_unmasked_prob=0.05, 
+        random_token_prob=0.05
     ):
     """
     Apply noise and masking to the source tokens.
