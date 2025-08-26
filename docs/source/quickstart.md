@@ -60,6 +60,40 @@ print(np.array(unimol_repr['cls_repr']).shape)
 # atomic level repr, align with rdkit mol.GetAtoms()
 print(np.array(unimol_repr['atomic_reprs']).shape)
 ```
+## Molecule pretraining
+
+Uni-Mol can be pretrained from scratch using the ``run_pretrain`` utility. The
+script is driven by Hydra, so configuration options are supplied on the command
+line. The examples below demonstrate common setups for LMDB and CSV inputs.
+
+### LMDB dataset
+
+```bash
+python -m unimol_tools.run_pretrain \
+    dataset.train_path=train.lmdb \
+    dataset.valid_path=valid.lmdb \
+    dataset.data_type=lmdb \
+    dataset.dict_path=dict.txt \
+    training.total_steps=10000 \
+    training.batch_size=32
+```
+
+`dataset.dict_path` is optional.
+
+### CSV dataset
+
+```bash
+python -m unimol_tools.run_pretrain \
+    dataset.train_path=train.csv \
+    dataset.valid_path=valid.csv \
+    dataset.data_type=csv \
+    dataset.smiles_column=smiles \
+    training.total_steps=10000 \
+    training.batch_size=32
+```
+
+Checkpoints and the dictionary are written to the output directory.
+
 ## Continue training (Re-train)
 
 ```python

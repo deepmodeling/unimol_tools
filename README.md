@@ -118,6 +118,44 @@ print(np.array(unimol_repr['cls_repr']).shape)
 print(np.array(unimol_repr['atomic_reprs']).shape)
 ```
 
+### Molecule pretraining
+
+`unimol_tools` provides a command-line utility for pretraining Uni-Mol models on
+your own dataset. The script uses
+[Hydra](https://hydra.cc/) so configuration values can be overridden at the
+command line. Two common invocation examples are shown below: one for LMDB data
+and one for a CSV of SMILES strings.
+
+#### LMDB dataset
+
+```bash
+python -m unimol_tools.run_pretrain \
+    dataset.train_path=train.lmdb \
+    dataset.valid_path=valid.lmdb \
+    dataset.data_type=lmdb \
+    dataset.dict_path=dict.txt \
+    training.total_steps=10000 \
+    training.batch_size=32
+```
+
+`dataset.dict_path` is optional.
+
+#### CSV dataset
+
+```bash
+python -m unimol_tools.run_pretrain \
+    dataset.train_path=train.csv \
+    dataset.valid_path=valid.csv \
+    dataset.data_type=csv \
+    dataset.smiles_column=smiles \
+    training.total_steps=10000 \
+    training.batch_size=32
+```
+
+All available options are defined in
+[`pretrain_config.py`](unimol_tools/pretrain/pretrain_config.py), and checkpoints
+along with the dictionary are saved to the run directory.
+
 ## Credits
 We thanks all contributors from the community for their suggestions, bug reports and chemistry advices. Currently unimol-tools is maintained by Yaning Cui, Xiaohong Ji, Zhifeng Gao from DP Technology and AI for Science Insitution, Beijing.
 
