@@ -7,3 +7,7 @@ rdkit>=2024.3.4
 pyyaml
 addict
 tqdm
+hydra-core
+omegaconf
+tensorboard
+lmdb

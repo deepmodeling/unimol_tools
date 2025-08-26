@@ -33,6 +33,10 @@ setup(
         "scikit-learn>=1.5.0",
         "numba",
         "tqdm",
+        "hydra-core",
+        "omegaconf"
+        "tensorboard",
+        "lmdb",
     ],
     python_requires=">=3.9",
     include_package_data=True,
