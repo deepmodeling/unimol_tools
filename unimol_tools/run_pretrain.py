@@ -6,7 +6,7 @@ import shutil
 import hydra
 import numpy as np
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from unimol_tools.pretrain import (
     LMDBDataset,
@@ -17,6 +17,8 @@ from unimol_tools.pretrain import (
     build_dictionary,
     preprocess_dataset,
     compute_lmdb_dist_stats,
+    count_input_data,
+    count_lmdb_entries,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,43 +40,99 @@ class MolPretrain:
         self.dist_std = None
         if ds_cfg.data_type != 'lmdb' and not ds_cfg.train_path.endswith('.lmdb'):
             lmdb_path = os.path.splitext(ds_cfg.train_path)[0] + '.lmdb'
-            logger.info(
-                f"Preprocessing training data from {ds_cfg.train_path} to {lmdb_path}"
+            expected_cnt = count_input_data(
+                ds_cfg.train_path, ds_cfg.data_type, ds_cfg.smiles_column
             )
-            lmdb_path, self.dist_mean, self.dist_std = preprocess_dataset(
-                ds_cfg.train_path,
-                lmdb_path,
-                data_type=ds_cfg.data_type,
-                smiles_col=ds_cfg.smiles_column,
-                num_conf=ds_cfg.num_conformers if ds_cfg.add_2d else 1,
-                add_2d=ds_cfg.add_2d,
-                remove_hs=ds_cfg.remove_hydrogen,
-            )
-            train_lmdb = lmdb_path
-            logger.info(
-                f"Dataset preprocessing finished, LMDB saved at {lmdb_path}"
-            )
+            if os.path.exists(lmdb_path):
+                lmdb_cnt = count_lmdb_entries(lmdb_path)
+                if lmdb_cnt == expected_cnt:
+                    logger.info(
+                        f"Found existing training LMDB {lmdb_path} with {lmdb_cnt} molecules"
+                    )
+                    train_lmdb = lmdb_path
+                    self.dist_mean, self.dist_std = compute_lmdb_dist_stats(train_lmdb)
+                else:
+                    logger.warning(
+                        f"Existing LMDB {lmdb_path} has {lmdb_cnt} molecules but {expected_cnt} are expected; regenerating"
+                    )
+                    lmdb_path, self.dist_mean, self.dist_std = preprocess_dataset(
+                        ds_cfg.train_path,
+                        lmdb_path,
+                        data_type=ds_cfg.data_type,
+                        smiles_col=ds_cfg.smiles_column,
+                        num_conf=ds_cfg.num_conformers,
+                        remove_hs=ds_cfg.remove_hydrogen,
+                        num_workers=ds_cfg.preprocess_workers,
+                    )
+                    train_lmdb = lmdb_path
+                    logger.info(
+                        f"Dataset preprocessing finished, LMDB saved at {lmdb_path}"
+                    )
+            else:
+                logger.info(
+                    f"Preprocessing training data from {ds_cfg.train_path} to {lmdb_path}"
+                )
+                lmdb_path, self.dist_mean, self.dist_std = preprocess_dataset(
+                    ds_cfg.train_path,
+                    lmdb_path,
+                    data_type=ds_cfg.data_type,
+                    smiles_col=ds_cfg.smiles_column,
+                    num_conf=ds_cfg.num_conformers,
+                    remove_hs=ds_cfg.remove_hydrogen,
+                    num_workers=ds_cfg.preprocess_workers,
+                )
+                train_lmdb = lmdb_path
+                logger.info(
+                    f"Dataset preprocessing finished, LMDB saved at {lmdb_path}"
+                )
 
             if ds_cfg.valid_path:
                 val_lmdb = os.path.splitext(ds_cfg.valid_path)[0] + '.lmdb'
-                logger.info(
-                    f"Preprocessing validation data from {ds_cfg.valid_path} to {val_lmdb}"
+                expected_val_cnt = count_input_data(
+                    ds_cfg.valid_path, ds_cfg.data_type, ds_cfg.smiles_column
                 )
-                preprocess_dataset(
-                    ds_cfg.valid_path,
-                    val_lmdb,
-                    data_type=ds_cfg.data_type,
-                    smiles_col=ds_cfg.smiles_column,
-                    num_conf=ds_cfg.num_conformers if ds_cfg.add_2d else 1,
-                    add_2d=ds_cfg.add_2d,
-                    remove_hs=ds_cfg.remove_hydrogen,
-                )
-                logger.info(
-                    f"Validation dataset preprocessing finished, LMDB saved at {val_lmdb}"
-                )
+                if os.path.exists(val_lmdb):
+                    val_cnt = count_lmdb_entries(val_lmdb)
+                    if val_cnt == expected_val_cnt:
+                        logger.info(
+                            f"Found existing validation LMDB {val_lmdb} with {val_cnt} molecules"
+                        )
+                    else:
+                        logger.warning(
+                            f"Existing validation LMDB {val_lmdb} has {val_cnt} molecules but {expected_val_cnt} are expected; regenerating"
+                        )
+                        preprocess_dataset(
+                            ds_cfg.valid_path,
+                            val_lmdb,
+                            data_type=ds_cfg.data_type,
+                            smiles_col=ds_cfg.smiles_column,
+                            num_conf=ds_cfg.num_conformers,
+                            remove_hs=ds_cfg.remove_hydrogen,
+                            num_workers=ds_cfg.preprocess_workers,
+                        )
+                        logger.info(
+                            f"Validation dataset preprocessing finished, LMDB saved at {val_lmdb}"
+                        )
+                else:
+                    logger.info(
+                        f"Preprocessing validation data from {ds_cfg.valid_path} to {val_lmdb}"
+                    )
+                    preprocess_dataset(
+                        ds_cfg.valid_path,
+                        val_lmdb,
+                        data_type=ds_cfg.data_type,
+                        smiles_col=ds_cfg.smiles_column,
+                        num_conf=ds_cfg.num_conformers,
+                        remove_hs=ds_cfg.remove_hydrogen,
+                        num_workers=ds_cfg.preprocess_workers,
+                    )
+                    logger.info(
+                        f"Validation dataset preprocessing finished, LMDB saved at {val_lmdb}"
+                    )
         else:
             if train_lmdb:
                 self.dist_mean, self.dist_std = compute_lmdb_dist_stats(train_lmdb)
+                # self.dist_mean, self.dist_std = 6.312581655060595, 3.3899264663911888
 
         # Build dictionary
         dict_path = ds_cfg.get('dict_path', None)
@@ -102,7 +160,8 @@ class MolPretrain:
             mask_prob=ds_cfg.mask_prob,
             leave_unmasked_prob=ds_cfg.leave_unmasked_prob,
             random_token_prob=ds_cfg.random_token_prob,
-            sample_conformer=ds_cfg.add_2d,
+            sample_conformer=True,
+            add_2d=ds_cfg.add_2d,
         )
 
         if val_lmdb:
@@ -119,7 +178,8 @@ class MolPretrain:
                 mask_prob=ds_cfg.mask_prob,
                 leave_unmasked_prob=ds_cfg.leave_unmasked_prob,
                 random_token_prob=ds_cfg.random_token_prob,
-                sample_conformer=ds_cfg.add_2d,
+                sample_conformer=True,
+                add_2d=ds_cfg.add_2d,
             )
         else:
             self.valid_dataset = None
@@ -168,7 +228,6 @@ class MolPretrain:
                 torch.cuda.manual_seed_all(seed)
                 torch.backends.cudnn.deterministic = True
                 torch.backends.cudnn.benchmark = False
-            # logger.info(f"Set random seed to {seed}")
 
 @hydra.main(version_base=None, config_path=None, config_name="pretrain_config")
 def main(cfg: DictConfig):

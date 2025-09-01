@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from rdkit import Chem
-from rdkit.Chem import AllChem
+import multiprocessing as mp
 
 from unimol_tools.data import Dictionary
 from unimol_tools.data.conformer import inner_smi2coords
@@ -74,7 +74,13 @@ def build_dictionary(lmdb_path, save_path=None):
         np.savetxt(f, dictionary, fmt='%s')
     return Dictionary.from_list(dictionary)
 
-def write_to_lmdb(lmdb_path, smi_list, num_conf=10, add_2d=True, remove_hs=False):
+def _worker_process_smi(args):
+    smi, idx, remove_hs, num_conf = args
+    return process_smi(smi, idx, remove_hs=remove_hs, num_conf=num_conf)
+
+def write_to_lmdb(
+    lmdb_path, smi_list, num_conf=10, remove_hs=False, num_workers=1
+):
     logger.info(f"Writing {len(smi_list)} SMILES to {lmdb_path}")
 
     env = lmdb.open(
@@ -91,24 +97,38 @@ def write_to_lmdb(lmdb_path, smi_list, num_conf=10, add_2d=True, remove_hs=False
     dist_sum_total = 0.0
     dist_sq_sum_total = 0.0
     dist_cnt_total = 0
-    for i in tqdm(range(len(smi_list)), total=len(smi_list)):
-        inner_output = process_smi(
-            smi_list[i],
-            i,
-            remove_hs=remove_hs,
-            num_conf=num_conf,
-            add_2d=add_2d,
-        )
-        if inner_output is not None:
-            idx, data, dsum, dsqsum, dcnt = inner_output
-            txn_write.put(str(idx).encode(), data)
-            dist_sum_total += dsum
-            dist_sq_sum_total += dsqsum
-            dist_cnt_total += dcnt
-        if (i + 1) % 1000 == 0:
-            txn_write.commit()
-            txn_write = env.begin(write=True)
-    logger.info(f"Processed {i+1} molecules")
+    processed = 0
+    if num_workers > 1:
+        args = [(smi_list[i], i, remove_hs, num_conf) for i in range(len(smi_list))]
+        with mp.Pool(num_workers) as pool:
+            for inner_output in tqdm(
+                pool.imap_unordered(_worker_process_smi, args), total=len(smi_list)
+            ):
+                if inner_output is None:
+                    continue
+                idx, data, dsum, dsqsum, dcnt = inner_output
+                txn_write.put(str(idx).encode(), data)
+                dist_sum_total += dsum
+                dist_sq_sum_total += dsqsum
+                dist_cnt_total += dcnt
+                processed += 1
+                if processed % 1000 == 0:
+                    txn_write.commit()
+                    txn_write = env.begin(write=True)
+    else:
+        for i, smi in enumerate(tqdm(smi_list, total=len(smi_list))):
+            inner_output = process_smi(smi, i, remove_hs=remove_hs, num_conf=num_conf)
+            if inner_output is not None:
+                idx, data, dsum, dsqsum, dcnt = inner_output
+                txn_write.put(str(idx).encode(), data)
+                dist_sum_total += dsum
+                dist_sq_sum_total += dsqsum
+                dist_cnt_total += dcnt
+                processed += 1
+                if processed % 1000 == 0:
+                    txn_write.commit()
+                    txn_write = env.begin(write=True)
+    logger.info(f"Processed {processed} molecules")
     txn_write.commit()
     env.close()
     dist_mean = (
@@ -124,7 +144,19 @@ def write_to_lmdb(lmdb_path, smi_list, num_conf=10, add_2d=True, remove_hs=False
     )
     return lmdb_path, dist_mean, dist_std
 
-def write_dicts_to_lmdb(lmdb_path, mol_list):
+def _worker_process_dict(args):
+    idx, item = args
+    data = {
+        "idx": idx,
+        "atoms": item["atoms"],
+        "coordinates": item["coordinates"],
+    }
+    if "smi" in item:
+        data["smi"] = item["smi"]
+    dsum, dsqsum, dcnt = _accum_dist_stats(item["coordinates"])
+    return idx, pickle.dumps(data), dsum, dsqsum, dcnt
+
+def write_dicts_to_lmdb(lmdb_path, mol_list, num_workers=1):
     """Write a list of pre-generated molecules to LMDB."""
     logger.info(f"Writing {len(mol_list)} molecule dicts to {lmdb_path}")
 
@@ -142,23 +174,42 @@ def write_dicts_to_lmdb(lmdb_path, mol_list):
     dist_sum_total = 0.0
     dist_sq_sum_total = 0.0
     dist_cnt_total = 0
-    for i, item in enumerate(tqdm(mol_list, total=len(mol_list))):
-        data = {
-            "idx": i,
-            "atoms": item["atoms"],
-            "coordinates": item["coordinates"],
-        }
-        if "smi" in item:
-            data["smi"] = item["smi"]
-        txn_write.put(str(i).encode(), pickle.dumps(data))
-        dsum, dsqsum, dcnt = _accum_dist_stats(item["coordinates"])
-        dist_sum_total += dsum
-        dist_sq_sum_total += dsqsum
-        dist_cnt_total += dcnt
-        if (i + 1) % 1000 == 0:
-            txn_write.commit()
-            txn_write = env.begin(write=True)
-    logger.info(f"Processed {i+1} molecules")
+    processed = 0
+    if num_workers > 1:
+        args = [(i, mol_list[i]) for i in range(len(mol_list))]
+        with mp.Pool(num_workers) as pool:
+            for inner_output in tqdm(
+                pool.imap_unordered(_worker_process_dict, args),
+                total=len(mol_list),
+            ):
+                idx, data, dsum, dsqsum, dcnt = inner_output
+                txn_write.put(str(idx).encode(), data)
+                dist_sum_total += dsum
+                dist_sq_sum_total += dsqsum
+                dist_cnt_total += dcnt
+                processed += 1
+                if processed % 1000 == 0:
+                    txn_write.commit()
+                    txn_write = env.begin(write=True)
+    else:
+        for i, item in enumerate(tqdm(mol_list, total=len(mol_list))):
+            data = {
+                "idx": i,
+                "atoms": item["atoms"],
+                "coordinates": item["coordinates"],
+            }
+            if "smi" in item:
+                data["smi"] = item["smi"]
+            txn_write.put(str(i).encode(), pickle.dumps(data))
+            dsum, dsqsum, dcnt = _accum_dist_stats(item["coordinates"])
+            dist_sum_total += dsum
+            dist_sq_sum_total += dsqsum
+            dist_cnt_total += dcnt
+            processed += 1
+            if processed % 1000 == 0:
+                txn_write.commit()
+                txn_write = env.begin(write=True)
+    logger.info(f"Processed {processed} molecules")
     txn_write.commit()
     env.close()
     dist_mean = (
@@ -174,40 +225,20 @@ def write_dicts_to_lmdb(lmdb_path, mol_list):
     )
     return lmdb_path, dist_mean, dist_std
 
-def smi2_2dcoords(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    mol = AllChem.AddHs(mol)
-    AllChem.Compute2DCoords(mol)
-    coordinates = mol.GetConformer().GetPositions().astype(np.float32)
-    assert len(mol.GetAtoms()) == len(coordinates)
-    return coordinates
-
-def process_smi(smi, idx, remove_hs=False, num_conf=10, add_2d=True, **params):
+def process_smi(smi, idx, remove_hs=False, num_conf=10, **params):
     """Process a single SMILES string and return index and serialized data."""
-    if add_2d:
-        conformers = []
-        for i in range(num_conf):
-            atoms, coordinates, _ = inner_smi2coords(
-                smi, seed=42 + i, mode="fast", remove_hs=remove_hs
-            )
-            conformers.append(coordinates)
-        conformers.append(smi2_2dcoords(smi))
-        data = {
-            "idx": idx,
-            "atoms": atoms,
-            "coordinates": conformers,
-            "smi": smi,
-        }
-    else:
+    conformers = []
+    for i in range(num_conf):
         atoms, coordinates, _ = inner_smi2coords(
-            smi, seed=42, mode="fast", remove_hs=remove_hs
+            smi, seed=42 + i, mode="fast", remove_hs=remove_hs
         )
-        data = {
-            "idx": idx,
-            "atoms": atoms,
-            "coordinates": coordinates,
-            "smi": smi,
-        }
+        conformers.append(coordinates)
+    data = {
+        "idx": idx,
+        "atoms": atoms,
+        "coordinates": conformers if num_conf > 1 else conformers[0],
+        "smi": smi,
+    }
 
     dsum, dsqsum, dcnt = _accum_dist_stats(data["coordinates"])
 
@@ -243,8 +274,49 @@ def process_sdf_file(file_path, remove_hs=False):
         mols.append({"atoms": atoms, "coordinates": coords, "smi": smi})
     return mols
 
-def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
-                       num_conf=10, add_2d=True, remove_hs=False):
+def count_input_data(data, data_type="csv", smiles_col="smi"):
+    """Return the number of molecules in a non-LMDB dataset."""
+    if data_type in ["smi", "txt"]:
+        with open(data, "r") as f:
+            return sum(1 for line in f if line.strip())
+    elif data_type == "csv":
+        df = pd.read_csv(data)
+        if smiles_col not in df.columns:
+            raise ValueError(f"Column '{smiles_col}' not found in CSV file.")
+        return df.shape[0]
+    elif data_type == "sdf":
+        supplier = Chem.SDMolSupplier(data, removeHs=False)
+        return sum(1 for mol in supplier if mol is not None)
+    elif data_type == "list":
+        return len(list(data))
+    else:
+        raise ValueError(f"Unsupported data_type: {data_type}")
+
+def count_lmdb_entries(lmdb_path):
+    """Return the number of entries stored in an LMDB file."""
+    env = lmdb.open(
+        lmdb_path,
+        subdir=False,
+        readonly=True,
+        lock=False,
+        readahead=False,
+        meminit=False,
+        max_readers=256,
+    )
+    txn = env.begin()
+    length = txn.stat()["entries"]
+    env.close()
+    return length
+
+def preprocess_dataset(
+    data,
+    lmdb_path,
+    data_type="smi",
+    smiles_col="smi",
+    num_conf=10,
+    remove_hs=False,
+    num_workers=1,
+):
     """Preprocess various dataset formats into an LMDB file.
 
     Args:
@@ -255,6 +327,7 @@ def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
             ``'csv'`` for CSV files, ``'sdf'`` for SDF molecule files,
             ``'list'`` for a Python list of SMILES strings.
         smiles_col: Column name used when ``data_type='csv'``.
+        num_workers: Number of worker processes used for preprocessing.
     """
     logger.info(f"Preprocessing data of type '{data_type}' to {lmdb_path}")
     if data_type in ['smi', 'txt']:
@@ -264,8 +337,8 @@ def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
             lmdb_path,
             smi_list,
             num_conf=num_conf,
-            add_2d=add_2d,
             remove_hs=remove_hs,
+            num_workers=num_workers,
         )
     elif data_type == 'csv':
         smi_list = process_csv(data, smiles_col=smiles_col)
@@ -274,13 +347,13 @@ def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
             lmdb_path,
             smi_list,
             num_conf=num_conf,
-            add_2d=add_2d,
             remove_hs=remove_hs,
+            num_workers=num_workers,
         )
     elif data_type == 'sdf':
         mols = process_sdf_file(data, remove_hs=remove_hs)
         logger.info(f"Loaded {len(mols)} molecules from SDF")
-        return write_dicts_to_lmdb(lmdb_path, mols)
+        return write_dicts_to_lmdb(lmdb_path, mols, num_workers=num_workers)
     elif data_type == 'list':
         smi_list = list(data)
         logger.info(f"Loaded {len(smi_list)} SMILES from list")
@@ -288,8 +361,8 @@ def preprocess_dataset(data, lmdb_path, data_type='smi', smiles_col='smi',
             lmdb_path,
             smi_list,
             num_conf=num_conf,
-            add_2d=add_2d,
             remove_hs=remove_hs,
+            num_workers=num_workers,
         )
     else:
         raise ValueError(f"Unsupported data_type: {data_type}")

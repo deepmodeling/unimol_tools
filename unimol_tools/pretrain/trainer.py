@@ -16,8 +16,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from unimol_tools.tasks.trainer import get_linear_schedule_with_warmup
+from unimol_tools.utils.dynamic_loss_scaler import DynamicLossScaler
 
 logger = logging.getLogger(__name__)
+
 
 class UniMolPretrainTrainer:
     def __init__(self, model, dataset, loss_fn, config, local_rank=0, resume: str=None, valid_dataset=None):
@@ -27,6 +29,7 @@ class UniMolPretrainTrainer:
         self.loss_fn = loss_fn
         self.config = config
         self.local_rank = local_rank
+        self.fp16 = getattr(config, "fp16", True)
 
         run_dir = getattr(config, "output_dir", None)
         if run_dir:
@@ -45,9 +48,23 @@ class UniMolPretrainTrainer:
             torch.cuda.set_device(local_rank)
             dist.init_process_group(backend='nccl')
             self.model = self.model.to(local_rank)
+            if self.fp16:
+                self.model = self.model.half()
+                if isinstance(self.loss_fn, nn.Module):
+                    self.loss_fn = self.loss_fn.to(local_rank).half()
+            else:
+                if isinstance(self.loss_fn, nn.Module):
+                    self.loss_fn = self.loss_fn.to(local_rank)
             self.model = DDP(self.model, device_ids=[local_rank])
         else:
             self.model = self.model.cuda()
+            if self.fp16:
+                self.model = self.model.half()
+                if isinstance(self.loss_fn, nn.Module):
+                    self.loss_fn = self.loss_fn.cuda().half()
+            else:
+                if isinstance(self.loss_fn, nn.Module):
+                    self.loss_fn = self.loss_fn.cuda()
 
         self.optimizer = optim.Adam(
             self.model.parameters(),
@@ -85,12 +102,13 @@ class UniMolPretrainTrainer:
         g = torch.Generator()
         g.manual_seed(config.seed)
 
+        num_workers = getattr(self.config, "num_workers", 8)
         self.dataloader = DataLoader(
             self.dataset,
             batch_size=self.config.batch_size,
             shuffle=(self.sampler is None),
             sampler=self.sampler,
-            num_workers=4,
+            num_workers=num_workers,
             pin_memory=True,
             collate_fn=self.model.batch_collate_fn,
             worker_init_fn=seed_worker,
@@ -102,12 +120,36 @@ class UniMolPretrainTrainer:
                 batch_size=self.config.batch_size,
                 shuffle=False,
                 sampler=self.valid_sampler,
-                num_workers=4,
+                num_workers=num_workers,
                 pin_memory=True,
                 collate_fn=self.model.batch_collate_fn,
             )
         else:
             self.valid_dataloader = None
+
+        self.world_size = (
+            dist.get_world_size() if dist.is_available() and dist.is_initialized() else 1
+        )
+        if self.local_rank == 0:
+            effective_bs = (
+                self.config.batch_size * self.config.update_freq * self.world_size
+            )
+            logger.info(
+                f"GPUs: {self.world_size}, batch size per GPU: {self.config.batch_size}, update_freq: {self.config.update_freq}, total batch size: {effective_bs}"
+            )
+            logger.info(f"Learning rate: {self.config.lr:.4e}")
+
+        if self.fp16 and not torch.cuda.is_available():
+            logger.warning("FP16 requested but CUDA is not available; disabling fp16.")
+            self.fp16 = False
+        self.scaler = (
+            DynamicLossScaler(
+                init_scale=getattr(config, "fp16_init_scale", 4),
+                scale_window=getattr(config, "fp16_scale_window", 256),
+            )
+            if self.fp16
+            else None
+        )
 
         # resume training from a checkpoint if provided or detect last
         self.start_epoch = 0
@@ -147,78 +189,123 @@ class UniMolPretrainTrainer:
             step_logging_infos = []
             epoch_logging_infos = []
             num_batches = len(self.dataloader)
+            update_freq = getattr(self.config, "update_freq", 1)
+            self.optimizer.zero_grad()
+            accum_logging = []
 
             for i, batch in enumerate(self.dataloader, start=1):
                 net_input, net_target = self.decorate_batch(batch)
-                loss, logging_info = self.loss_fn(self.model, net_input, net_target)
-                self.optimizer.zero_grad()
-                loss.backward()
-                clip_val = getattr(self.config, "clip_grad_norm", 0)
-                if clip_val and clip_val > 0:
-                    clip_grad_norm_(self.model.parameters(), clip_val)
-                self.optimizer.step()
-                if self.scheduler is not None:
-                    self.scheduler.step()
-                step_logging_infos.append(logging_info)
-                epoch_logging_infos.append(logging_info)
-                self.global_step += 1
+                loss, sample_size, logging_info = self.loss_fn(
+                    self.model, net_input, net_target
+                )
+                if self.fp16:
+                    self.scaler.scale(loss / sample_size / update_freq).backward()
+                else:
+                    (loss / sample_size / update_freq).backward()
+                accum_logging.append(logging_info)
 
-                if self.writer:
-                    self.writer.add_scalar('Step/loss', loss.item(), self.global_step)
-                    for key, value in logging_info.items():
-                        if key == 'loss':
-                            continue
-                        self.writer.add_scalar(f'Step/{key}', value, self.global_step)
+                if i % update_freq == 0 or i == num_batches:
+                    grad_norm = 0.0
+                    if self.fp16:
+                        self.scaler.unscale_(self.model.parameters())
 
-                if log_every > 0 and self.global_step % log_every == 0 and self.local_rank == 0:
-                    self.reduce_metrics(
-                        step_logging_infos,
-                        writer=self.writer,
-                        logger=logger,
-                        step=self.global_step,
-                        split="train_inner",
-                        unit="Step",
-                        epoch=display_epoch,
-                        inner_step=i,
-                        inner_total=num_batches,
-                    )
-                    step_logging_infos = []
+                    clip_val = getattr(self.config, "clip_grad_norm", 0)
+                    if clip_val and clip_val > 0:
+                        grad_norm = clip_grad_norm_(self.model.parameters(), clip_val)
+                    else:
+                        for p in self.model.parameters():
+                            if p.grad is not None:
+                                grad_norm += p.grad.data.float().norm(2).item() ** 2
+                        grad_norm = grad_norm ** 0.5
 
-                if max_steps and self.global_step >= max_steps:
-                    if self.local_rank == 0:
-                        logger.info(
-                            f"Reached max steps {max_steps}, stopping training"
+                    overflow = False
+                    if self.fp16:
+                        try:
+                            self.scaler.check_overflow(grad_norm)
+                        except OverflowError:
+                            overflow = True
+
+                    if overflow:
+                        self.optimizer.zero_grad()
+                        if self.local_rank == 0:
+                            logger.warning(
+                                f"gradient overflow detected, ignoring gradient, setting loss scale to: {self.scaler.loss_scale:.1f}"
+                            )
+                        accum_logging = []
+                        continue
+                    self.optimizer.step()
+                    if self.fp16:
+                        self.scaler.update()
+                    if self.scheduler is not None:
+                        self.scheduler.step()
+                    self.optimizer.zero_grad()
+
+                    merged_log = {}
+                    for log in accum_logging:
+                        for k, v in log.items():
+                            merged_log[k] = merged_log.get(k, 0) + v
+                    step_logging_infos.append(merged_log)
+                    epoch_logging_infos.append(merged_log)
+                    self.global_step += 1
+
+                    if self.writer:
+                        step_metrics = self.loss_fn.reduce_metrics([merged_log])
+                        self.writer.add_scalar('Step/loss', step_metrics.get('loss', 0), self.global_step)
+                        for key, value in step_metrics.items():
+                            if key == 'loss':
+                                continue
+                            self.writer.add_scalar(f'Step/{key}', value, self.global_step)
+                    accum_logging = []
+
+                    if log_every > 0 and self.global_step % log_every == 0 and self.local_rank == 0:
+                        self.reduce_metrics(
+                            step_logging_infos,
+                            writer=self.writer,
+                            logger=logger,
+                            step=self.global_step,
+                            split="train_inner",
+                            unit="Step",
+                            epoch=display_epoch,
+                            inner_step=i,
+                            inner_total=num_batches,
                         )
-                    stop_training = True
-                    break
+                        step_logging_infos = []
 
-                if save_every > 0 and self.global_step % save_every == 0:
-                    val_metrics = None
-                    if self.valid_dataloader is not None:
-                        val_metrics = self.evaluate(self.global_step, log=self.local_rank == 0)
-                    if self.local_rank == 0:
-                        self._save_checkpoint(epoch, self.global_step, 'checkpoint_last.ckpt')
-                        if self.valid_dataloader is not None and val_metrics is not None:
-                            curr_loss = val_metrics.get('loss', float('inf'))
-                            if curr_loss < self.best_loss:
-                                self.best_loss = curr_loss
-                                self.no_improve_steps = 0
-                                logger.info(
-                                    f"New best model at step {self.global_step} with loss {curr_loss:.4f}"
-                                )
-                                self._save_checkpoint(epoch, self.global_step, 'checkpoint_best.ckpt')
-                            else:
-                                self.no_improve_steps += 1
-                                if (
-                                    self.patience >= 0
-                                    and self.no_improve_steps > self.patience
-                                ):
+                    if save_every > 0 and self.global_step % save_every == 0:
+                        val_metrics = None
+                        if self.valid_dataloader is not None:
+                            val_metrics = self.evaluate(self.global_step, log=self.local_rank == 0)
+                        if self.local_rank == 0:
+                            self._save_checkpoint(epoch, self.global_step, 'checkpoint_last.ckpt')
+                            if self.valid_dataloader is not None and val_metrics is not None:
+                                curr_loss = val_metrics.get('loss', float('inf'))
+                                if curr_loss < self.best_loss:
+                                    self.best_loss = curr_loss
+                                    self.no_improve_steps = 0
                                     logger.info(
-                                        f"Early stopping triggered at step {self.global_step}"
+                                        f"New best model at step {self.global_step} with loss {curr_loss:.4f}"
                                     )
-                                    stop_training = True
-                        self._save_checkpoint(epoch, self.global_step)
-                    if stop_training:
+                                    self._save_checkpoint(epoch, self.global_step, 'checkpoint_best.ckpt')
+                                else:
+                                    self.no_improve_steps += 1
+                                    if (
+                                        self.patience >= 0
+                                        and self.no_improve_steps > self.patience
+                                    ):
+                                        logger.info(
+                                            f"Early stopping triggered at step {self.global_step}"
+                                        )
+                                        stop_training = True
+                            self._save_checkpoint(epoch, self.global_step)
+                        if stop_training:
+                            break
+
+                    if max_steps and self.global_step >= max_steps:
+                        if self.local_rank == 0:
+                            logger.info(
+                                f"Reached max steps {max_steps}, stopping training"
+                            )
+                        stop_training = True
                         break
 
             if self.local_rank == 0:
@@ -294,7 +381,9 @@ class UniMolPretrainTrainer:
         with torch.no_grad():
             for batch in self.valid_dataloader:
                 net_input, net_target = self.decorate_batch(batch)
-                loss, logging_info = self.loss_fn(self.model, net_input, net_target)
+                loss, sample_size, logging_info = self.loss_fn(
+                    self.model, net_input, net_target
+                )
                 logging_infos.append(logging_info)
         metrics = self.reduce_metrics(
             logging_infos,
@@ -321,6 +410,11 @@ class UniMolPretrainTrainer:
             'tgt_coordinates': batch['net_target']['tgt_coordinates'].to(device),
             'tgt_distance': batch['net_target']['tgt_distance'].to(device),
         }
+        if self.fp16:
+            for k in ['src_coord', 'src_distance']:
+                net_input[k] = net_input[k].half()
+            for k in ['tgt_coordinates', 'tgt_distance']:
+                net_target[k] = net_target[k].half()
         return net_input, net_target
 
     def reduce_metrics(
@@ -336,6 +430,10 @@ class UniMolPretrainTrainer:
         inner_total=None,
     ):
         metrics_mean = self.loss_fn.reduce_metrics(logging_outputs, split=split)
+        if split.startswith("train") and self.fp16 and self.scaler is not None:
+            metrics_mean["loss_scale"] = self.scaler.loss_scale
+        if "bsz" in metrics_mean:
+            metrics_mean["bsz"] *= self.world_size
         if writer is not None and step is not None:
             if "loss" in metrics_mean:
                 writer.add_scalar(f"{split}/loss", metrics_mean["loss"], step)
@@ -348,9 +446,16 @@ class UniMolPretrainTrainer:
             if "loss" in metrics_mean:
                 log_items.append(f"loss={metrics_mean['loss']:.4f}")
             for k, v in metrics_mean.items():
-                if k == "loss":
+                if k in {"loss", "bsz", "loss_scale"}:
                     continue
                 log_items.append(f"{k}={v:.4f}")
+            bsz_val = metrics_mean.get("bsz")
+            if bsz_val is not None:
+                log_items.append(f"bsz={int(bsz_val)}")
+            current_lr = self.optimizer.param_groups[0]["lr"]
+            log_items.append(f"lr={current_lr:.4e}")
+            if split.startswith("train") and self.fp16 and self.scaler is not None:
+                log_items.append(f"loss_scale={self.scaler.loss_scale:.0f}")
             if (
                 split == "train_inner"
                 and epoch is not None

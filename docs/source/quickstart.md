@@ -75,10 +75,12 @@ python -m unimol_tools.run_pretrain \
     dataset.data_type=lmdb \
     dataset.dict_path=dict.txt \
     training.total_steps=10000 \
-    training.batch_size=32
+    training.batch_size=16 \
+    training.update_freq=1
 ```
 
-`dataset.dict_path` is optional.
+`dataset.dict_path` is optional. The effective batch size is
+`n_gpu * training.batch_size * training.update_freq`.
 
 ### CSV dataset
 
@@ -89,10 +91,13 @@ python -m unimol_tools.run_pretrain \
     dataset.data_type=csv \
     dataset.smiles_column=smiles \
     training.total_steps=10000 \
-    training.batch_size=32
+    training.batch_size=16 \
+    training.update_freq=1
 ```
 
-Checkpoints and the dictionary are written to the output directory.
+Checkpoints and the dictionary are written to the output directory. When GPU
+memory is limited, increase `training.update_freq` to accumulate gradients while
+keeping the effective batch size `n_gpu * training.batch_size * training.update_freq`.
 
 ## Continue training (Re-train)
 

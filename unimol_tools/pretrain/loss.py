@@ -21,6 +21,8 @@ class UniMolLoss(nn.Module):
         masked_dist_loss=10,
         x_norm_loss=0.01,
         delta_pair_repr_norm_loss=0.01,
+        # Statistics computed from the original Uni-Mol dataset:
+        # https://github.com/dptech-corp/Uni-Mol/blob/main/unimol/unimol/losses/unimol.py
         dist_mean=6.312581655060595,
         dist_std=3.3899264663911888,
     ):
@@ -112,7 +114,7 @@ class UniMolLoss(nn.Module):
             ] = delta_encoder_pair_rep_norm.data
 
         logging_output["loss"] = loss.data
-        return loss, logging_output
+        return loss, 1, logging_output
 
     def cal_dist_loss(
         self,
@@ -144,6 +146,11 @@ class UniMolLoss(nn.Module):
             beta=1.0,
         )
         return masked_dist_loss
+    
+    @staticmethod
+    def logging_outputs_can_be_summed(is_train: bool) -> bool:
+        """Indicate logging outputs are safe to sum across workers."""
+        return True
 
     @staticmethod
     def reduce_metrics(logging_outputs, split="train"):
@@ -158,6 +165,8 @@ class UniMolLoss(nn.Module):
             result["loss"] = loss_sum / sample_size
             metrics.log_scalar("loss", result["loss"], sample_size, round=3)
         if bsz > 0:
+            result["bsz"] = bsz
+            metrics.log_scalar("bsz", bsz, round=1)
             metrics.log_scalar("seq_len", seq_len / bsz, 1, round=3)
 
         masked_loss = sum(
