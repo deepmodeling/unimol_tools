@@ -11,12 +11,22 @@ from rdkit.Chem import AllChem
 from .data_utils import numpy_seed
 
 
-def smi2_2dcoords(smiles):
+def smi2_2dcoords(smiles, atoms=None):
     mol = Chem.MolFromSmiles(smiles)
     mol = AllChem.AddHs(mol)
     AllChem.Compute2DCoords(mol)
+    rdkit_atoms = [a.GetSymbol() for a in mol.GetAtoms()]
     coordinates = mol.GetConformer().GetPositions().astype(np.float32)
-    assert len(mol.GetAtoms()) == len(coordinates)
+
+    if atoms is not None and len(rdkit_atoms) != len(atoms):
+        mask = [sym != "H" for sym in rdkit_atoms]
+        coordinates = coordinates[mask]
+        rdkit_atoms = [sym for sym in rdkit_atoms if sym != "H"]
+
+    if atoms is not None:
+        assert len(rdkit_atoms) == len(atoms), "2D atom count does not match LMDB atoms"
+
+    assert len(rdkit_atoms) == len(coordinates)
     return coordinates
 
 
@@ -110,7 +120,7 @@ class UniMolDataset(Dataset):
 
         coord_list = list(coordinates) if isinstance(coordinates, list) else [coordinates]
         if self.add_2d and item.get("smi") is not None:
-            coord_list.append(smi2_2dcoords(item["smi"]))
+            coord_list.append(smi2_2dcoords(item["smi"], atoms))
 
         with numpy_seed(self.seed, epoch, idx):
             sel = np.random.randint(len(coord_list)) if self.sample_conformer else 0
