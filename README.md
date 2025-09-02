@@ -123,6 +123,36 @@ print(np.array(unimol_repr['cls_repr']).shape)
 print(np.array(unimol_repr['atomic_reprs']).shape)
 ```
 
+### Command-line utilities
+
+Hydra-powered entry points make training, prediction, and representation
+available from the command line. Key-value pairs override options from the
+YAML files in `unimol_tools/config`.
+
+#### Training
+```bash
+python -m unimol_tools.cli.run_train \
+    train_path=train.csv \
+    task=regression \
+    save_path=./exp \
+    smiles_col=smiles \
+    target_cols=[target1] \
+    epochs=10 \
+    learning_rate=1e-4 \
+    batch_size=16 \
+    kfold=5
+```
+
+#### Prediction
+```bash
+python -m unimol_tools.cli.run_predict load_model=./exp data_path=test.csv
+```
+
+#### Representation
+```bash
+python -m unimol_tools.cli.run_repr data_path=test.csv smiles_col=smiles
+```
+
 ### Molecule pretraining
 
 `unimol_tools` provides a command-line utility for pretraining Uni-Mol models on
@@ -134,7 +164,7 @@ and one for a CSV of SMILES strings.
 #### LMDB dataset
 
 ```bash
-python -m unimol_tools.run_pretrain \
+python -m unimol_tools.cli.run_pretrain \
     dataset.train_path=train.lmdb \
     dataset.valid_path=valid.lmdb \
     dataset.data_type=lmdb \
@@ -150,7 +180,7 @@ python -m unimol_tools.run_pretrain \
 #### CSV dataset
 
 ```bash
-python -m unimol_tools.run_pretrain \
+python -m unimol_tools.cli.run_pretrain \
     dataset.train_path=train.csv \
     dataset.valid_path=valid.csv \
     dataset.data_type=csv \
