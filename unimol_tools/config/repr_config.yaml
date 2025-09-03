@@ -12,7 +12,6 @@ use_cuda: true
 use_ddp: false
 use_gpu: all
 save_path: ./repr
-repr_path: null
 pretrained_model_path: null
 pretrained_dict_path: null
 return_atomic_reprs: false
