@@ -22,13 +22,15 @@ logger = logging.getLogger(__name__)
 
 
 class UniMolPretrainTrainer:
-    def __init__(self, model, dataset, loss_fn, config, local_rank=0, resume: str=None, valid_dataset=None):
+    def __init__(self, model, dataset, loss_fn, config, local_rank=None, resume: str=None, valid_dataset=None):
         self.model = model
         self.dataset = dataset
         self.valid_dataset = valid_dataset
         self.loss_fn = loss_fn
         self.config = config
-        self.local_rank = local_rank
+        # Use ranks provided by torchrun
+        self.local_rank = int(os.environ.get("LOCAL_RANK", 0)) if local_rank is None else local_rank
+        self.rank = int(os.environ.get("RANK", 0))
         self.fp16 = getattr(config, "fp16", True)
 
         run_dir = getattr(config, "output_dir", None)
@@ -38,24 +40,21 @@ class UniMolPretrainTrainer:
         else:
             run_dir = HydraConfig.get().run.dir
         self.ckpt_dir = Path(os.path.join(run_dir, 'checkpoints'))
-        self.writer = SummaryWriter(log_dir=run_dir) if local_rank == 0 else None
-        if local_rank == 0:
-            os.makedirs(self.ckpt_dir, exist_ok=True)
-            logger.info(f"Checkpoints will be saved to {self.ckpt_dir}")
 
         # DDP setup
         if 'WORLD_SIZE' in os.environ and int(os.environ['WORLD_SIZE']) > 1:
-            torch.cuda.set_device(local_rank)
+            torch.cuda.set_device(self.local_rank)
             dist.init_process_group(backend='nccl')
-            self.model = self.model.to(local_rank)
+            self.rank = dist.get_rank()
+            self.model = self.model.to(self.local_rank)
             if self.fp16:
                 self.model = self.model.half()
                 if isinstance(self.loss_fn, nn.Module):
-                    self.loss_fn = self.loss_fn.to(local_rank).half()
+                    self.loss_fn = self.loss_fn.to(self.local_rank).half()
             else:
                 if isinstance(self.loss_fn, nn.Module):
-                    self.loss_fn = self.loss_fn.to(local_rank)
-            self.model = DDP(self.model, device_ids=[local_rank])
+                    self.loss_fn = self.loss_fn.to(self.local_rank)
+            self.model = DDP(self.model, device_ids=[self.local_rank])
         else:
             self.model = self.model.cuda()
             if self.fp16:
@@ -65,6 +64,11 @@ class UniMolPretrainTrainer:
             else:
                 if isinstance(self.loss_fn, nn.Module):
                     self.loss_fn = self.loss_fn.cuda()
+
+        self.writer = SummaryWriter(log_dir=run_dir) if self.rank == 0 else None
+        if self.rank == 0:
+            os.makedirs(self.ckpt_dir, exist_ok=True)
+            logger.info(f"Checkpoints will be saved to {self.ckpt_dir}")
 
         self.optimizer = optim.Adam(
             self.model.parameters(),
@@ -130,7 +134,7 @@ class UniMolPretrainTrainer:
         self.world_size = (
             dist.get_world_size() if dist.is_available() and dist.is_initialized() else 1
         )
-        if self.local_rank == 0:
+        if self.rank == 0:
             effective_bs = (
                 self.config.batch_size * self.config.update_freq * self.world_size
             )
@@ -227,7 +231,7 @@ class UniMolPretrainTrainer:
 
                     if overflow:
                         self.optimizer.zero_grad()
-                        if self.local_rank == 0:
+                        if self.rank == 0:
                             logger.warning(
                                 f"gradient overflow detected, ignoring gradient, setting loss scale to: {self.scaler.loss_scale:.1f}"
                             )
@@ -257,7 +261,7 @@ class UniMolPretrainTrainer:
                             self.writer.add_scalar(f'Step/{key}', value, self.global_step)
                     accum_logging = []
 
-                    if log_every > 0 and self.global_step % log_every == 0 and self.local_rank == 0:
+                    if log_every > 0 and self.global_step % log_every == 0 and self.rank == 0:
                         self.reduce_metrics(
                             step_logging_infos,
                             writer=self.writer,
@@ -274,8 +278,8 @@ class UniMolPretrainTrainer:
                     if save_every > 0 and self.global_step % save_every == 0:
                         val_metrics = None
                         if self.valid_dataloader is not None:
-                            val_metrics = self.evaluate(self.global_step, log=self.local_rank == 0)
-                        if self.local_rank == 0:
+                            val_metrics = self.evaluate(self.global_step, log=self.rank == 0)
+                        if self.rank == 0:
                             self._save_checkpoint(epoch, self.global_step, 'checkpoint_last.ckpt')
                             if self.valid_dataloader is not None and val_metrics is not None:
                                 curr_loss = val_metrics.get('loss', float('inf'))
@@ -301,14 +305,14 @@ class UniMolPretrainTrainer:
                             break
 
                     if max_steps and self.global_step >= max_steps:
-                        if self.local_rank == 0:
+                        if self.rank == 0:
                             logger.info(
                                 f"Reached max steps {max_steps}, stopping training"
                             )
                         stop_training = True
                         break
 
-            if self.local_rank == 0:
+            if self.rank == 0:
                 logger.info(
                     f"End of epoch {display_epoch} (average epoch stats below)"
                 )
@@ -323,14 +327,14 @@ class UniMolPretrainTrainer:
             epoch += 1
 
         final_epoch = epoch - 1
-        if self.local_rank == 0:
+        if self.rank == 0:
             self._save_checkpoint(final_epoch, self.global_step, 'checkpoint_last.ckpt')
 
         if self.writer:
             self.writer.close()
 
     def _save_checkpoint(self, epoch, step, name=None):
-        if self.local_rank != 0:
+        if self.rank != 0:
             return
         ckpt = {
             "model": self.model.module.state_dict()

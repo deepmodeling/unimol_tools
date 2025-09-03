@@ -99,7 +99,8 @@ line. The examples below demonstrate common setups for LMDB and CSV inputs.
 ### LMDB dataset
 
 ```bash
-python -m unimol_tools.cli.run_pretrain \
+torchrun --standalone --nproc_per_node=NUM_GPUS \
+    -m unimol_tools.cli.run_pretrain \
     dataset.train_path=train.lmdb \
     dataset.valid_path=valid.lmdb \
     dataset.data_type=lmdb \
@@ -115,7 +116,8 @@ python -m unimol_tools.cli.run_pretrain \
 ### CSV dataset
 
 ```bash
-python -m unimol_tools.cli.run_pretrain \
+torchrun --standalone --nproc_per_node=NUM_GPUS \
+    -m unimol_tools.cli.run_pretrain \
     dataset.train_path=train.csv \
     dataset.valid_path=valid.csv \
     dataset.data_type=csv \
@@ -124,6 +126,10 @@ python -m unimol_tools.cli.run_pretrain \
     training.batch_size=16 \
     training.update_freq=1
 ```
+
+To scale across multiple machines, include the appropriate `torchrun`
+arguments, e.g. `--nnodes`, `--node_rank`, `--master_addr` and
+`--master_port`.
 
 Checkpoints and the dictionary are written to the output directory. When GPU
 memory is limited, increase `training.update_freq` to accumulate gradients while

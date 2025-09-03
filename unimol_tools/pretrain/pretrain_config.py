@@ -222,10 +222,6 @@ class TrainingConfig:
         default=8,
         metadata={"help": "Number of worker processes for data loading."},
     )
-    local_rank: int = field(
-        default=0,
-        metadata={"help": "Local rank for distributed training."},
-    )
     seed: int = field(
         default=42,
         metadata={"help": "Random seed."},

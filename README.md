@@ -164,7 +164,8 @@ and one for a CSV of SMILES strings.
 #### LMDB dataset
 
 ```bash
-python -m unimol_tools.cli.run_pretrain \
+torchrun --standalone --nproc_per_node=NUM_GPUS \
+    -m unimol_tools.cli.run_pretrain \
     dataset.train_path=train.lmdb \
     dataset.valid_path=valid.lmdb \
     dataset.data_type=lmdb \
@@ -180,7 +181,8 @@ python -m unimol_tools.cli.run_pretrain \
 #### CSV dataset
 
 ```bash
-python -m unimol_tools.cli.run_pretrain \
+torchrun --standalone --nproc_per_node=NUM_GPUS \
+    -m unimol_tools.cli.run_pretrain \
     dataset.train_path=train.csv \
     dataset.valid_path=valid.csv \
     dataset.data_type=csv \
@@ -188,6 +190,14 @@ python -m unimol_tools.cli.run_pretrain \
     training.total_steps=10000 \
     training.batch_size=16 \
     training.update_freq=1
+```
+
+For multi-node training, specify additional arguments, for example:
+
+```bash
+torchrun --nnodes=2 --nproc_per_node=8 --node_rank=0 \
+    --master_addr=<master-ip> --master_port=<port> \
+    -m unimol_tools.cli.run_pretrain ...
 ```
 
 All available options are defined in

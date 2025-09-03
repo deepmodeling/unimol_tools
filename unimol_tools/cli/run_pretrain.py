@@ -28,7 +28,9 @@ class MolPretrain:
     def __init__(self, cfg: DictConfig):
         # Read configuration
         self.config = cfg
-        self.local_rank = getattr(self.config.training, 'local_rank', 0)
+        # Ranks are provided by torchrun
+        self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        self.rank = int(os.environ.get("RANK", 0))
         seed = getattr(self.config.training, 'seed', 42)
         self.set_seed(seed)
         
@@ -208,7 +210,7 @@ class MolPretrain:
             resume=self.config.training.get('resume', None),
             valid_dataset=self.valid_dataset,
         )
-        if self.local_rank == 0 and getattr(self, 'dict_path', None):
+        if self.rank == 0 and getattr(self, 'dict_path', None):
             try:
                 dst_path = os.path.join(trainer.ckpt_dir, os.path.basename(self.dict_path))
                 shutil.copy(self.dict_path, dst_path)
