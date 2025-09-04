@@ -107,6 +107,12 @@ class UniMolPretrainTrainer:
         g.manual_seed(config.seed)
 
         num_workers = getattr(self.config, "num_workers", 8)
+        collate_fn = (
+            self.model.module.batch_collate_fn
+            if isinstance(self.model, DDP)
+            else self.model.batch_collate_fn
+        )
+
         self.dataloader = DataLoader(
             self.dataset,
             batch_size=self.config.batch_size,
@@ -114,7 +120,7 @@ class UniMolPretrainTrainer:
             sampler=self.sampler,
             num_workers=num_workers,
             pin_memory=True,
-            collate_fn=self.model.batch_collate_fn,
+            collate_fn=collate_fn,
             worker_init_fn=seed_worker,
             generator=g,
         )
@@ -126,7 +132,7 @@ class UniMolPretrainTrainer:
                 sampler=self.valid_sampler,
                 num_workers=num_workers,
                 pin_memory=True,
-                collate_fn=self.model.batch_collate_fn,
+                collate_fn=collate_fn,
             )
         else:
             self.valid_dataloader = None

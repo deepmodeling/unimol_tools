@@ -2,6 +2,7 @@ import os
 import random
 import logging
 import shutil
+import time
 
 import hydra
 import numpy as np
@@ -20,8 +21,40 @@ from unimol_tools.pretrain import (
     count_input_data,
     count_lmdb_entries,
 )
+from unimol_tools.data.dictionary import Dictionary
 
 logger = logging.getLogger(__name__)
+
+
+def load_or_compute_dist_stats(lmdb_path, rank):
+    """Load cached distance statistics or compute them on rank 0."""
+    stats_file = os.path.join(os.path.dirname(lmdb_path), "dist_stats.npy")
+    if os.path.exists(stats_file):
+        dist_mean, dist_std = np.load(stats_file)
+        return float(dist_mean), float(dist_std)
+    if rank == 0:
+        dist_mean, dist_std = compute_lmdb_dist_stats(lmdb_path)
+        np.save(stats_file, np.array([dist_mean, dist_std], dtype=np.float32))
+    else:
+        while not os.path.exists(stats_file):
+            time.sleep(1)
+        dist_mean, dist_std = np.load(stats_file)
+    return float(dist_mean), float(dist_std)
+
+
+def load_or_build_dictionary(lmdb_path, rank, dict_path=None):
+    """Load existing dictionary file or build it on rank 0."""
+    if dict_path is None:
+        dict_path = os.path.join(os.path.dirname(lmdb_path), "dictionary.txt")
+    if os.path.exists(dict_path):
+        return Dictionary.load(dict_path), dict_path
+    if rank == 0:
+        dictionary = build_dictionary(lmdb_path, save_path=dict_path)
+    else:
+        while not os.path.exists(dict_path):
+            time.sleep(1)
+        dictionary = Dictionary.load(dict_path)
+    return dictionary, dict_path
 
 
 class MolPretrain:
@@ -52,7 +85,9 @@ class MolPretrain:
                         f"Found existing training LMDB {lmdb_path} with {lmdb_cnt} molecules"
                     )
                     train_lmdb = lmdb_path
-                    self.dist_mean, self.dist_std = compute_lmdb_dist_stats(train_lmdb)
+                    self.dist_mean, self.dist_std = load_or_compute_dist_stats(
+                        train_lmdb, self.rank
+                    )
                 else:
                     logger.warning(
                         f"Existing LMDB {lmdb_path} has {lmdb_cnt} molecules but {expected_cnt} are expected; regenerating"
@@ -133,20 +168,24 @@ class MolPretrain:
                     )
         else:
             if train_lmdb:
-                self.dist_mean, self.dist_std = compute_lmdb_dist_stats(train_lmdb)
-                # self.dist_mean, self.dist_std = 6.312581655060595, 3.3899264663911888
+                self.dist_mean, self.dist_std = load_or_compute_dist_stats(
+                    train_lmdb, self.rank
+                )
 
         # Build dictionary
         dict_path = ds_cfg.get('dict_path', None)
         if dict_path:
-            from unimol_tools.data.dictionary import Dictionary
             self.dictionary = Dictionary.load(dict_path)
             self.dict_path = dict_path
             logger.info(f"Loaded dictionary from {dict_path}")
         else:
-            self.dictionary = build_dictionary(train_lmdb)
-            self.dict_path = os.path.join(os.path.dirname(train_lmdb), 'dictionary.txt')
-            logger.info("Built dictionary from training LMDB")
+            self.dictionary, self.dict_path = load_or_build_dictionary(
+                train_lmdb, self.rank
+            )
+            if self.rank == 0:
+                logger.info("Built dictionary from training LMDB")
+            else:
+                logger.info(f"Loaded dictionary from {self.dict_path}")
 
         # Build dataset
         logger.info(f"Loading LMDB dataset from {train_lmdb}")
@@ -233,6 +272,9 @@ class MolPretrain:
 
 @hydra.main(version_base=None, config_path=None, config_name="pretrain_config")
 def main(cfg: DictConfig):
+    rank = int(os.environ.get("RANK", 0))
+    if rank != 0:
+        logging.disable(logging.WARNING)
     task = MolPretrain(cfg)
     task.pretrain()
 

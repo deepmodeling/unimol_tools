@@ -1,3 +1,4 @@
+import logging
 import pickle
 from functools import lru_cache
 
@@ -10,11 +11,17 @@ from rdkit.Chem import AllChem
 
 from .data_utils import numpy_seed
 
+logger = logging.getLogger(__name__)
 
 def smi2_2dcoords(smiles, atoms=None):
     mol = Chem.MolFromSmiles(smiles)
-    mol = AllChem.AddHs(mol)
-    AllChem.Compute2DCoords(mol)
+    if mol is None:
+        raise ValueError(f"Invalid SMILES string: {smiles}")
+    try:
+        mol = AllChem.AddHs(mol)
+        AllChem.Compute2DCoords(mol)
+    except Exception as exc:  # pragma: no cover - RDKit exceptions are varied
+        raise ValueError(f"Failed to compute 2D coordinates for '{smiles}': {exc}")
     rdkit_atoms = [a.GetSymbol() for a in mol.GetAtoms()]
     coordinates = mol.GetConformer().GetPositions().astype(np.float32)
 
@@ -23,8 +30,10 @@ def smi2_2dcoords(smiles, atoms=None):
         coordinates = coordinates[mask]
         rdkit_atoms = [sym for sym in rdkit_atoms if sym != "H"]
 
-    if atoms is not None:
-        assert len(rdkit_atoms) == len(atoms), "2D atom count does not match LMDB atoms"
+    if atoms is not None and len(rdkit_atoms) != len(atoms):
+        raise ValueError(
+            f"2D atom count {len(rdkit_atoms)} does not match LMDB atoms {len(atoms)}"
+        )
 
     assert len(rdkit_atoms) == len(coordinates)
     return coordinates
@@ -120,7 +129,14 @@ class UniMolDataset(Dataset):
 
         coord_list = list(coordinates) if isinstance(coordinates, list) else [coordinates]
         if self.add_2d and item.get("smi") is not None:
-            coord_list.append(smi2_2dcoords(item["smi"], atoms))
+            try:
+                coord_list.append(smi2_2dcoords(item["smi"], atoms))
+            except ValueError as exc:
+                logger.warning(
+                    "[UniMolDataset] failed to add 2D conformer for idx %s: %s",
+                    idx,
+                    exc,
+                )
 
         with numpy_seed(self.seed, epoch, idx):
             sel = np.random.randint(len(coord_list)) if self.sample_conformer else 0

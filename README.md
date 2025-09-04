@@ -37,12 +37,12 @@ pip install huggingface_hub
 ### Option 2: Installing from source (for latest version)
 
 ```python
-## Dependencies installation
-pip install -r requirements.txt
-
 ## Clone repository
 git clone https://github.com/deepmodeling/unimol_tools.git
 cd unimol_tools
+
+## Dependencies installation
+pip install -r requirements.txt
 
 ## Install
 python setup.py install
@@ -164,13 +164,17 @@ and one for a CSV of SMILES strings.
 #### LMDB dataset
 
 ```bash
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export HYDRA_FULL_ERROR=1
+export OMP_NUM_THREADS=1
+
 torchrun --standalone --nproc_per_node=NUM_GPUS \
     -m unimol_tools.cli.run_pretrain \
     dataset.train_path=train.lmdb \
     dataset.valid_path=valid.lmdb \
     dataset.data_type=lmdb \
     dataset.dict_path=dict.txt \
-    training.total_steps=10000 \
+    training.total_steps=1000000 \
     training.batch_size=16 \
     training.update_freq=1
 ```
@@ -181,13 +185,17 @@ torchrun --standalone --nproc_per_node=NUM_GPUS \
 #### CSV dataset
 
 ```bash
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export HYDRA_FULL_ERROR=1
+export OMP_NUM_THREADS=1
+
 torchrun --standalone --nproc_per_node=NUM_GPUS \
     -m unimol_tools.cli.run_pretrain \
     dataset.train_path=train.csv \
     dataset.valid_path=valid.csv \
     dataset.data_type=csv \
     dataset.smiles_column=smiles \
-    training.total_steps=10000 \
+    training.total_steps=1000000 \
     training.batch_size=16 \
     training.update_freq=1
 ```
@@ -195,6 +203,10 @@ torchrun --standalone --nproc_per_node=NUM_GPUS \
 For multi-node training, specify additional arguments, for example:
 
 ```bash
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export HYDRA_FULL_ERROR=1
+export OMP_NUM_THREADS=1
+
 torchrun --nnodes=2 --nproc_per_node=8 --node_rank=0 \
     --master_addr=<master-ip> --master_port=<port> \
     -m unimol_tools.cli.run_pretrain ...

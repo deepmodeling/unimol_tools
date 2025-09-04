@@ -34,7 +34,7 @@ setup(
         "numba",
         "tqdm",
         "hydra-core",
-        "omegaconf"
+        "omegaconf",
         "tensorboard",
         "lmdb",
     ],
