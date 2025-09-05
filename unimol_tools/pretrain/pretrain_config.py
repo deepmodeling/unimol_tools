@@ -63,9 +63,15 @@ class DatasetConfig:
         metadata={"help": "Number of 3D conformers to generate per molecule during preprocessing."},
     )
     preprocess_workers: int = field(
-        default=4,
+        default=8,
         metadata={
             "help": "Number of worker processes to use when converting datasets to LMDB."
+        },
+    )
+    stats_workers: int = field(
+        default=8,
+        metadata={
+            "help": "Number of CPU workers to scan LMDBs for building dictionaries and distance statistics."
         },
     )
 
@@ -252,6 +258,8 @@ class PretrainConfig:
             raise ValueError("update_freq must be a positive integer.")
         if self.dataset.preprocess_workers <= 0:
             raise ValueError("preprocess_workers must be a positive integer.")
+        if self.dataset.stats_workers <= 0:
+            raise ValueError("stats_workers must be a positive integer.")
         if self.training.lr <= 0:
             raise ValueError("Learning rate must be a positive value.")
         if self.training.total_steps <= 0:

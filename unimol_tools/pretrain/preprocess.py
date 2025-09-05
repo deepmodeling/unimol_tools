@@ -40,38 +40,87 @@ def _accum_dist_stats(coords):
     return dist_sum, dist_sq_sum, dist_cnt
 
 
-def build_dictionary(lmdb_path, save_path=None):
-    """
-    Count all element types and return a dictionary list with special tokens.
-    """
+def _dict_worker(lmdb_path, start, end):
     env = lmdb.open(
-        lmdb_path, 
-        subdir=False, 
-        readonly=True, 
-        lock=False, 
-        readahead=False, 
-        meminit=False, 
-        max_readers=256,
+        lmdb_path,
+        subdir=False,
+        readonly=True,
+        lock=False,
+        readahead=False,
+        meminit=False,
+        max_readers=1,
     )
     txn = env.begin()
-    length = txn.stat()['entries']
-    elements_set = set()
-    for idx in range(length):
+    elem = set()
+    for idx in range(start, end):
         data = txn.get(str(idx).encode())
         if data is None:
             continue
         item = pickle.loads(data)
-        atoms = item.get('atoms')
+        atoms = item.get("atoms")
         if atoms:
-            elements_set.update(atoms)
-    special_tokens = ['[PAD]', '[CLS]', '[SEP]', '[UNK]']
-    dictionary = special_tokens + sorted(list(elements_set))
+            elem.update(atoms)
     env.close()
+    return elem
+
+def build_dictionary(lmdb_path, save_path=None, num_workers=1):
+    """Count element types and return a Dictionary.
+
+    Args:
+        lmdb_path: Path to LMDB dataset.
+        save_path: Optional output path for the text dictionary file.
+        num_workers: Number of parallel workers to use.
+    """
+    env = lmdb.open(
+        lmdb_path,
+        subdir=False,
+        readonly=True,
+        lock=False,
+        readahead=False,
+        meminit=False,
+        max_readers=256,
+    )
+    txn = env.begin()
+    length = txn.stat()["entries"]
+    env.close()
+
+    elements_set = set()
+    if num_workers > 1:
+        chunk = (length + num_workers - 1) // num_workers
+        args = [
+            (lmdb_path, i * chunk, min((i + 1) * chunk, length))
+            for i in range(num_workers)
+        ]
+        with mp.Pool(num_workers) as pool:
+            for s in pool.starmap(_dict_worker, args):
+                elements_set.update(s)
+    else:
+        env = lmdb.open(
+            lmdb_path,
+            subdir=False,
+            readonly=True,
+            lock=False,
+            readahead=False,
+            meminit=False,
+            max_readers=1,
+        )
+        txn = env.begin()
+        for idx in range(length):
+            data = txn.get(str(idx).encode())
+            if data is None:
+                continue
+            item = pickle.loads(data)
+            atoms = item.get("atoms")
+            if atoms:
+                elements_set.update(atoms)
+        env.close()
+
+    special_tokens = ["[PAD]", "[CLS]", "[SEP]", "[UNK]"]
+    dictionary = special_tokens + sorted(list(elements_set))
     if save_path is None:
-        save_path = os.path.join(os.path.dirname(lmdb_path), 'dictionary.txt')
-    # Save dictionary to file
-    with open(save_path, 'wb') as f:
-        np.savetxt(f, dictionary, fmt='%s')
+        save_path = os.path.join(os.path.dirname(lmdb_path), "dictionary.txt")
+    with open(save_path, "wb") as f:
+        np.savetxt(f, dictionary, fmt="%s")
     return Dictionary.from_list(dictionary)
 
 def _worker_process_smi(args):
@@ -79,9 +128,9 @@ def _worker_process_smi(args):
     return process_smi(smi, idx, remove_hs=remove_hs, num_conf=num_conf)
 
 def write_to_lmdb(
-    lmdb_path, smi_list, num_conf=10, remove_hs=False, num_workers=1
+    lmdb_path, smi_iter, num_conf=10, remove_hs=False, num_workers=1, total=None
 ):
-    logger.info(f"Writing {len(smi_list)} SMILES to {lmdb_path}")
+    logger.info(f"Writing SMILES to {lmdb_path}")
 
     env = lmdb.open(
         lmdb_path,
@@ -99,10 +148,13 @@ def write_to_lmdb(
     dist_cnt_total = 0
     processed = 0
     if num_workers > 1:
-        args = [(smi_list[i], i, remove_hs, num_conf) for i in range(len(smi_list))]
-        with mp.Pool(num_workers) as pool:
+        ctx = mp.get_context("spawn")
+        def gen():
+            for idx, smi in enumerate(smi_iter):
+                yield (smi, idx, remove_hs, num_conf)
+        with ctx.Pool(num_workers) as pool:
             for inner_output in tqdm(
-                pool.imap_unordered(_worker_process_smi, args), total=len(smi_list)
+                pool.imap_unordered(_worker_process_smi, gen()), total=total
             ):
                 if inner_output is None:
                     continue
@@ -116,7 +168,7 @@ def write_to_lmdb(
                     txn_write.commit()
                     txn_write = env.begin(write=True)
     else:
-        for i, smi in enumerate(tqdm(smi_list, total=len(smi_list))):
+        for i, smi in enumerate(tqdm(smi_iter, total=total)):
             inner_output = process_smi(smi, i, remove_hs=remove_hs, num_conf=num_conf)
             if inner_output is not None:
                 idx, data, dsum, dsqsum, dcnt = inner_output
@@ -156,9 +208,9 @@ def _worker_process_dict(args):
     dsum, dsqsum, dcnt = _accum_dist_stats(item["coordinates"])
     return idx, pickle.dumps(data), dsum, dsqsum, dcnt
 
-def write_dicts_to_lmdb(lmdb_path, mol_list, num_workers=1):
-    """Write a list of pre-generated molecules to LMDB."""
-    logger.info(f"Writing {len(mol_list)} molecule dicts to {lmdb_path}")
+def write_dicts_to_lmdb(lmdb_path, mol_iter, num_workers=1, total=None):
+    """Write an iterable of pre-generated molecules to LMDB."""
+    logger.info(f"Writing molecule dicts to {lmdb_path}")
 
     env = lmdb.open(
         lmdb_path,
@@ -176,11 +228,14 @@ def write_dicts_to_lmdb(lmdb_path, mol_list, num_workers=1):
     dist_cnt_total = 0
     processed = 0
     if num_workers > 1:
-        args = [(i, mol_list[i]) for i in range(len(mol_list))]
-        with mp.Pool(num_workers) as pool:
+        ctx = mp.get_context("spawn")
+        def gen():
+            for idx, item in enumerate(mol_iter):
+                yield (idx, item)
+        with ctx.Pool(num_workers) as pool:
             for inner_output in tqdm(
-                pool.imap_unordered(_worker_process_dict, args),
-                total=len(mol_list),
+                pool.imap_unordered(_worker_process_dict, gen()),
+                total=total,
             ):
                 idx, data, dsum, dsqsum, dcnt = inner_output
                 txn_write.put(str(idx).encode(), data)
@@ -192,7 +247,7 @@ def write_dicts_to_lmdb(lmdb_path, mol_list, num_workers=1):
                     txn_write.commit()
                     txn_write = env.begin(write=True)
     else:
-        for i, item in enumerate(tqdm(mol_list, total=len(mol_list))):
+        for i, item in enumerate(tqdm(mol_iter, total=total)):
             data = {
                 "idx": i,
                 "atoms": item["atoms"],
@@ -244,24 +299,27 @@ def process_smi(smi, idx, remove_hs=False, num_conf=10, **params):
 
     return idx, pickle.dumps(data), dsum, dsqsum, dcnt
 
-def process_csv(csv_path, smiles_col='smi'):
-    """
-    Read a CSV file and return a list of SMILES strings.
-    """
-    df = pd.read_csv(csv_path)
-    if smiles_col not in df.columns:
-        raise ValueError(f"Column '{smiles_col}' not found in CSV file.")
-    return df[smiles_col].tolist()
+def iter_smi_file(file_path):
+    """Yield SMILES strings from a text file one at a time."""
+    with open(file_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                yield line
 
-def process_smi_file(file_path):
-    """Read a file containing one SMILES per line."""
-    with open(file_path, 'r') as f:
-        return [line.strip() for line in f if line.strip()]
+def iter_csv_file(csv_path, smiles_col="smi", chunksize=10000):
+    """Yield SMILES strings from a CSV file in chunks."""
+    for chunk in pd.read_csv(csv_path, chunksize=chunksize):
+        if smiles_col not in chunk.columns:
+            raise ValueError(f"Column '{smiles_col}' not found in CSV file.")
+        for smi in chunk[smiles_col].astype(str):
+            smi = smi.strip()
+            if smi:
+                yield smi
 
-def process_sdf_file(file_path, remove_hs=False):
-    """Read an SDF file and return a list of molecule dicts."""
+def iter_sdf_file(file_path, remove_hs=False):
+    """Yield molecule dicts from an SDF file without loading everything into memory."""
     supplier = Chem.SDMolSupplier(file_path, removeHs=False)
-    mols = []
     for mol in supplier:
         if mol is None:
             continue
@@ -271,8 +329,7 @@ def process_sdf_file(file_path, remove_hs=False):
         conf = mol.GetConformer()
         coords = conf.GetPositions().astype(np.float32)
         smi = Chem.MolToSmiles(mol)
-        mols.append({"atoms": atoms, "coordinates": coords, "smi": smi})
-    return mols
+        yield {"atoms": atoms, "coordinates": coords, "smi": smi}
 
 def count_input_data(data, data_type="csv", smiles_col="smi"):
     """Return the number of molecules in a non-LMDB dataset."""
@@ -280,15 +337,15 @@ def count_input_data(data, data_type="csv", smiles_col="smi"):
         with open(data, "r") as f:
             return sum(1 for line in f if line.strip())
     elif data_type == "csv":
-        df = pd.read_csv(data)
-        if smiles_col not in df.columns:
-            raise ValueError(f"Column '{smiles_col}' not found in CSV file.")
-        return df.shape[0]
+        count = 0
+        for chunk in pd.read_csv(data, usecols=[smiles_col], chunksize=100000):
+            count += chunk.shape[0]
+        return count
     elif data_type == "sdf":
         supplier = Chem.SDMolSupplier(data, removeHs=False)
         return sum(1 for mol in supplier if mol is not None)
     elif data_type == "list":
-        return len(list(data))
+        return len(data) if hasattr(data, "__len__") else sum(1 for _ in data)
     else:
         raise ValueError(f"Unsupported data_type: {data_type}")
 
@@ -330,44 +387,72 @@ def preprocess_dataset(
         num_workers: Number of worker processes used for preprocessing.
     """
     logger.info(f"Preprocessing data of type '{data_type}' to {lmdb_path}")
-    if data_type in ['smi', 'txt']:
-        smi_list = process_smi_file(data)
-        logger.info(f"Loaded {len(smi_list)} SMILES from file")
+    if data_type in ["smi", "txt"]:
+        total = count_input_data(data, data_type)
         return write_to_lmdb(
             lmdb_path,
-            smi_list,
+            iter_smi_file(data),
             num_conf=num_conf,
             remove_hs=remove_hs,
             num_workers=num_workers,
+            total=total,
         )
-    elif data_type == 'csv':
-        smi_list = process_csv(data, smiles_col=smiles_col)
-        logger.info(f"Loaded {len(smi_list)} SMILES from CSV")
+    elif data_type == "csv":
+        total = count_input_data(data, "csv", smiles_col)
         return write_to_lmdb(
             lmdb_path,
-            smi_list,
+            iter_csv_file(data, smiles_col=smiles_col),
             num_conf=num_conf,
             remove_hs=remove_hs,
             num_workers=num_workers,
+            total=total,
         )
-    elif data_type == 'sdf':
-        mols = process_sdf_file(data, remove_hs=remove_hs)
-        logger.info(f"Loaded {len(mols)} molecules from SDF")
-        return write_dicts_to_lmdb(lmdb_path, mols, num_workers=num_workers)
-    elif data_type == 'list':
-        smi_list = list(data)
-        logger.info(f"Loaded {len(smi_list)} SMILES from list")
+    elif data_type == "sdf":
+        total = count_input_data(data, "sdf")
+        return write_dicts_to_lmdb(
+            lmdb_path,
+            iter_sdf_file(data, remove_hs=remove_hs),
+            num_workers=num_workers,
+            total=total,
+        )
+    elif data_type == "list":
+        total = len(data) if hasattr(data, "__len__") else None
         return write_to_lmdb(
             lmdb_path,
-            smi_list,
+            iter(data),
             num_conf=num_conf,
             remove_hs=remove_hs,
             num_workers=num_workers,
+            total=total,
         )
     else:
         raise ValueError(f"Unsupported data_type: {data_type}")
 
-def compute_lmdb_dist_stats(lmdb_path):
+def _dist_worker(lmdb_path, start, end):
+    env = lmdb.open(
+        lmdb_path,
+        subdir=False,
+        readonly=True,
+        lock=False,
+        readahead=False,
+        meminit=False,
+        max_readers=1,
+    )
+    txn = env.begin()
+    dsum = dsqsum = dcnt = 0.0
+    for idx in range(start, end):
+        data = txn.get(str(idx).encode())
+        if data is None:
+            continue
+        item = pickle.loads(data)
+        a, b, c = _accum_dist_stats(item.get("coordinates"))
+        dsum += a
+        dsqsum += b
+        dcnt += c
+    env.close()
+    return dsum, dsqsum, dcnt
+
+def compute_lmdb_dist_stats(lmdb_path, num_workers=1):
     """Compute distance mean and std from an existing LMDB dataset."""
     env = lmdb.open(
         lmdb_path,
@@ -379,29 +464,50 @@ def compute_lmdb_dist_stats(lmdb_path):
         max_readers=256,
     )
     txn = env.begin()
-    length = txn.stat()['entries']
+    length = txn.stat()["entries"]
+    env.close()
+
     dist_sum_total = 0.0
     dist_sq_sum_total = 0.0
-    dist_cnt_total = 0
-    for idx in range(length):
-        data = txn.get(str(idx).encode())
-        if data is None:
-            continue
-        item = pickle.loads(data)
-        dsum, dsqsum, dcnt = _accum_dist_stats(item.get("coordinates"))
-        dist_sum_total += dsum
-        dist_sq_sum_total += dsqsum
-        dist_cnt_total += dcnt
-    env.close()
-    dist_mean = (
-        dist_sum_total / dist_cnt_total if dist_cnt_total > 0 else 0.0
-    )
+    dist_cnt_total = 0.0
+    if num_workers > 1:
+        chunk = (length + num_workers - 1) // num_workers
+        args = [
+            (lmdb_path, i * chunk, min((i + 1) * chunk, length))
+            for i in range(num_workers)
+        ]
+        with mp.Pool(num_workers) as pool:
+            for dsum, dsqsum, dcnt in pool.starmap(_dist_worker, args):
+                dist_sum_total += dsum
+                dist_sq_sum_total += dsqsum
+                dist_cnt_total += dcnt
+    else:
+        env = lmdb.open(
+            lmdb_path,
+            subdir=False,
+            readonly=True,
+            lock=False,
+            readahead=False,
+            meminit=False,
+            max_readers=1,
+        )
+        txn = env.begin()
+        for idx in range(length):
+            data = txn.get(str(idx).encode())
+            if data is None:
+                continue
+            item = pickle.loads(data)
+            dsum, dsqsum, dcnt = _accum_dist_stats(item.get("coordinates"))
+            dist_sum_total += dsum
+            dist_sq_sum_total += dsqsum
+            dist_cnt_total += dcnt
+        env.close()
+
+    dist_mean = dist_sum_total / dist_cnt_total if dist_cnt_total > 0 else 0.0
     dist_std = (
         np.sqrt(dist_sq_sum_total / dist_cnt_total - dist_mean ** 2)
         if dist_cnt_total > 0
         else 1.0
     )
-    logger.info(
-        f"dist_mean={dist_mean:.6f}, dist_std={dist_std:.6f}"
-    )
+    logger.info(f"dist_mean={dist_mean:.6f}, dist_std={dist_std:.6f}")
     return dist_mean, dist_std

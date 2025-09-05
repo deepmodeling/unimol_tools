@@ -7,6 +7,7 @@ import time
 import hydra
 import numpy as np
 import torch
+import torch.distributed as dist
 from omegaconf import DictConfig
 
 from unimol_tools.pretrain import (
@@ -26,14 +27,14 @@ from unimol_tools.data.dictionary import Dictionary
 logger = logging.getLogger(__name__)
 
 
-def load_or_compute_dist_stats(lmdb_path, rank):
+def load_or_compute_dist_stats(lmdb_path, rank, num_workers=1):
     """Load cached distance statistics or compute them on rank 0."""
     stats_file = os.path.join(os.path.dirname(lmdb_path), "dist_stats.npy")
     if os.path.exists(stats_file):
         dist_mean, dist_std = np.load(stats_file)
         return float(dist_mean), float(dist_std)
     if rank == 0:
-        dist_mean, dist_std = compute_lmdb_dist_stats(lmdb_path)
+        dist_mean, dist_std = compute_lmdb_dist_stats(lmdb_path, num_workers=num_workers)
         np.save(stats_file, np.array([dist_mean, dist_std], dtype=np.float32))
     else:
         while not os.path.exists(stats_file):
@@ -42,14 +43,14 @@ def load_or_compute_dist_stats(lmdb_path, rank):
     return float(dist_mean), float(dist_std)
 
 
-def load_or_build_dictionary(lmdb_path, rank, dict_path=None):
+def load_or_build_dictionary(lmdb_path, rank, dict_path=None, num_workers=1):
     """Load existing dictionary file or build it on rank 0."""
     if dict_path is None:
         dict_path = os.path.join(os.path.dirname(lmdb_path), "dictionary.txt")
     if os.path.exists(dict_path):
         return Dictionary.load(dict_path), dict_path
     if rank == 0:
-        dictionary = build_dictionary(lmdb_path, save_path=dict_path)
+        dictionary = build_dictionary(lmdb_path, save_path=dict_path, num_workers=num_workers)
     else:
         while not os.path.exists(dict_path):
             time.sleep(1)
@@ -73,25 +74,27 @@ class MolPretrain:
         val_lmdb = ds_cfg.valid_path
         self.dist_mean = None
         self.dist_std = None
+        stats_workers = ds_cfg.get("stats_workers", 1)
         if ds_cfg.data_type != 'lmdb' and not ds_cfg.train_path.endswith('.lmdb'):
             lmdb_path = os.path.splitext(ds_cfg.train_path)[0] + '.lmdb'
             expected_cnt = count_input_data(
                 ds_cfg.train_path, ds_cfg.data_type, ds_cfg.smiles_column
             )
-            if os.path.exists(lmdb_path):
-                lmdb_cnt = count_lmdb_entries(lmdb_path)
-                if lmdb_cnt == expected_cnt:
-                    logger.info(
-                        f"Found existing training LMDB {lmdb_path} with {lmdb_cnt} molecules"
-                    )
-                    train_lmdb = lmdb_path
-                    self.dist_mean, self.dist_std = load_or_compute_dist_stats(
-                        train_lmdb, self.rank
-                    )
-                else:
-                    logger.warning(
-                        f"Existing LMDB {lmdb_path} has {lmdb_cnt} molecules but {expected_cnt} are expected; regenerating"
-                    )
+            stats_file = os.path.join(os.path.dirname(lmdb_path), "dist_stats.npy")
+            if self.rank == 0:
+                regenerate = True
+                if os.path.exists(lmdb_path):
+                    lmdb_cnt = count_lmdb_entries(lmdb_path)
+                    if lmdb_cnt == expected_cnt:
+                        logger.info(
+                            f"Found existing training LMDB {lmdb_path} with {lmdb_cnt} molecules"
+                        )
+                        regenerate = False
+                    else:
+                        logger.warning(
+                            f"Existing LMDB {lmdb_path} has {lmdb_cnt} molecules but {expected_cnt} are expected; regenerating"
+                        )
+                if regenerate:
                     lmdb_path, self.dist_mean, self.dist_std = preprocess_dataset(
                         ds_cfg.train_path,
                         lmdb_path,
@@ -101,43 +104,42 @@ class MolPretrain:
                         remove_hs=ds_cfg.remove_hydrogen,
                         num_workers=ds_cfg.preprocess_workers,
                     )
-                    train_lmdb = lmdb_path
-                    logger.info(
-                        f"Dataset preprocessing finished, LMDB saved at {lmdb_path}"
+                    np.save(
+                        stats_file,
+                        np.array([self.dist_mean, self.dist_std], dtype=np.float32),
                     )
-            else:
-                logger.info(
-                    f"Preprocessing training data from {ds_cfg.train_path} to {lmdb_path}"
-                )
-                lmdb_path, self.dist_mean, self.dist_std = preprocess_dataset(
-                    ds_cfg.train_path,
-                    lmdb_path,
-                    data_type=ds_cfg.data_type,
-                    smiles_col=ds_cfg.smiles_column,
-                    num_conf=ds_cfg.num_conformers,
-                    remove_hs=ds_cfg.remove_hydrogen,
-                    num_workers=ds_cfg.preprocess_workers,
-                )
                 train_lmdb = lmdb_path
-                logger.info(
-                    f"Dataset preprocessing finished, LMDB saved at {lmdb_path}"
-                )
+            else:
+                while True:
+                    if os.path.exists(lmdb_path):
+                        lmdb_cnt = count_lmdb_entries(lmdb_path)
+                        if lmdb_cnt == expected_cnt and os.path.exists(stats_file):
+                            break
+                    time.sleep(1)
+                train_lmdb = lmdb_path
+            self.dist_mean, self.dist_std = load_or_compute_dist_stats(
+                train_lmdb, self.rank, num_workers=stats_workers
+            )
 
             if ds_cfg.valid_path:
                 val_lmdb = os.path.splitext(ds_cfg.valid_path)[0] + '.lmdb'
                 expected_val_cnt = count_input_data(
                     ds_cfg.valid_path, ds_cfg.data_type, ds_cfg.smiles_column
                 )
-                if os.path.exists(val_lmdb):
-                    val_cnt = count_lmdb_entries(val_lmdb)
-                    if val_cnt == expected_val_cnt:
-                        logger.info(
-                            f"Found existing validation LMDB {val_lmdb} with {val_cnt} molecules"
-                        )
-                    else:
-                        logger.warning(
-                            f"Existing validation LMDB {val_lmdb} has {val_cnt} molecules but {expected_val_cnt} are expected; regenerating"
-                        )
+                if self.rank == 0:
+                    regenerate_val = True
+                    if os.path.exists(val_lmdb):
+                        val_cnt = count_lmdb_entries(val_lmdb)
+                        if val_cnt == expected_val_cnt:
+                            logger.info(
+                                f"Found existing validation LMDB {val_lmdb} with {val_cnt} molecules"
+                            )
+                            regenerate_val = False
+                        else:
+                            logger.warning(
+                                f"Existing validation LMDB {val_lmdb} has {val_cnt} molecules but {expected_val_cnt} are expected; regenerating"
+                            )
+                    if regenerate_val:
                         preprocess_dataset(
                             ds_cfg.valid_path,
                             val_lmdb,
@@ -147,29 +149,17 @@ class MolPretrain:
                             remove_hs=ds_cfg.remove_hydrogen,
                             num_workers=ds_cfg.preprocess_workers,
                         )
-                        logger.info(
-                            f"Validation dataset preprocessing finished, LMDB saved at {val_lmdb}"
-                        )
                 else:
-                    logger.info(
-                        f"Preprocessing validation data from {ds_cfg.valid_path} to {val_lmdb}"
-                    )
-                    preprocess_dataset(
-                        ds_cfg.valid_path,
-                        val_lmdb,
-                        data_type=ds_cfg.data_type,
-                        smiles_col=ds_cfg.smiles_column,
-                        num_conf=ds_cfg.num_conformers,
-                        remove_hs=ds_cfg.remove_hydrogen,
-                        num_workers=ds_cfg.preprocess_workers,
-                    )
-                    logger.info(
-                        f"Validation dataset preprocessing finished, LMDB saved at {val_lmdb}"
-                    )
+                    while True:
+                        if os.path.exists(val_lmdb):
+                            val_cnt = count_lmdb_entries(val_lmdb)
+                            if val_cnt == expected_val_cnt:
+                                break
+                        time.sleep(1)
         else:
             if train_lmdb:
                 self.dist_mean, self.dist_std = load_or_compute_dist_stats(
-                    train_lmdb, self.rank
+                    train_lmdb, self.rank, num_workers=stats_workers
                 )
 
         # Build dictionary
@@ -180,7 +170,7 @@ class MolPretrain:
             logger.info(f"Loaded dictionary from {dict_path}")
         else:
             self.dictionary, self.dict_path = load_or_build_dictionary(
-                train_lmdb, self.rank
+                train_lmdb, self.rank, num_workers=stats_workers
             )
             if self.rank == 0:
                 logger.info("Built dictionary from training LMDB")
@@ -275,8 +265,12 @@ def main(cfg: DictConfig):
     rank = int(os.environ.get("RANK", 0))
     if rank != 0:
         logging.disable(logging.WARNING)
-    task = MolPretrain(cfg)
-    task.pretrain()
+    try:
+        task = MolPretrain(cfg)
+        task.pretrain()
+    finally:
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
 
 if __name__ == "__main__":
     main()
