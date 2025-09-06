@@ -70,12 +70,24 @@ class UniMolPretrainTrainer:
             os.makedirs(self.ckpt_dir, exist_ok=True)
             logger.info(f"Checkpoints will be saved to {self.ckpt_dir}")
 
-        self.optimizer = optim.Adam(
-            self.model.parameters(),
+        decay, no_decay = [], []
+        for name, p in self.model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if p.ndim == 1 or name.endswith(".bias"):
+                no_decay.append(p)
+            else:
+                decay.append(p)
+        optim_groups = [
+            {"params": decay, "weight_decay": self.config.weight_decay},
+            {"params": no_decay, "weight_decay": 0.0},
+        ]
+
+        self.optimizer = optim.AdamW(
+            optim_groups,
             lr=self.config.lr,
             betas=getattr(self.config, "adam_betas", (0.9, 0.99)),
             eps=getattr(self.config, "adam_eps", 1e-6),
-            weight_decay=self.config.weight_decay,
         )
         self.scheduler = None
         warmup_steps = getattr(config, "warmup_steps", 0)

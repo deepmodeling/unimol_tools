@@ -215,7 +215,7 @@ def coords2unimol(
 
     # Pad tokens
     src_tokens = torch.cat([torch.tensor([dictionary.bos()]), src_tokens, torch.tensor([dictionary.eos()])], dim=0)
-    tgt_tokens = torch.cat([torch.tensor([dictionary.bos()]), tgt_tokens, torch.tensor([dictionary.eos()])], dim=0)
+    tgt_tokens = torch.cat([torch.tensor([dictionary.pad()]), tgt_tokens, torch.tensor([dictionary.pad()])], dim=0)
 
     # Pad coordinates
     pad = torch.zeros((1, 3), dtype=torch.float32)
