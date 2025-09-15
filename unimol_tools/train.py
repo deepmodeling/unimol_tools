@@ -13,6 +13,7 @@ import os
 import joblib
 import numpy as np
 import pandas as pd
+from omegaconf import DictConfig, OmegaConf
 
 from .data import DataHub
 from .models import NNModel
@@ -25,6 +26,7 @@ class MolTrain(object):
 
     def __init__(
         self,
+        cfg: DictConfig | None = None,
         task='classification',
         data_type='molecule',
         epochs=10,
@@ -53,6 +55,8 @@ class MolTrain(object):
         load_model_dir=None,  # load model for transfer learning
         model_name='unimolv1',
         model_size='84m',
+        pretrained_model_path=None,
+        pretrained_dict_path=None,
         conf_cache_level=1,
         **params,
     ):
@@ -116,12 +120,90 @@ class MolTrain(object):
         :param load_model_dir: str, default=None, path to load model for transfer learning.
         :param model_name: str, default='unimolv1', currently support unimolv1, unimolv2.
         :param model_size: str, default='84m', model size. work when model_name is unimolv2. Avaliable: 84m, 164m, 310m, 570m, 1.1B.
+        :param pretrained_model_path: str, default=None, path to pretrained model.
+        :param pretrained_dict_path: str, default=None, path to pretrained model's dict file.
         :param conf_cache_level: int, optional [0, 1, 2], default=1, configuration cache level to save the conformers to sdf file.
             - 0: no caching.
             - 1: cache if not exists.
             - 2: always cache.
 
         """
+        if cfg is not None:
+            cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+            task = cfg_dict.get('task', task)
+            data_type = cfg_dict.get('data_type', data_type)
+            epochs = cfg_dict.get('epochs', epochs)
+            learning_rate = cfg_dict.get('learning_rate', learning_rate)
+            batch_size = cfg_dict.get('batch_size', batch_size)
+            early_stopping = cfg_dict.get('early_stopping', early_stopping)
+            metrics = cfg_dict.get('metrics', metrics)
+            split = cfg_dict.get('split', split)
+            split_group_col = cfg_dict.get('split_group_col', split_group_col)
+            kfold = cfg_dict.get('kfold', kfold)
+            save_path = cfg_dict.get('save_path', save_path)
+            remove_hs = cfg_dict.get('remove_hs', remove_hs)
+            smiles_col = cfg_dict.get('smiles_col', smiles_col)
+            target_cols = cfg_dict.get('target_cols', target_cols)
+            target_col_prefix = cfg_dict.get('target_col_prefix', target_col_prefix)
+            target_anomaly_check = cfg_dict.get(
+                'target_anomaly_check', target_anomaly_check
+            )
+            smiles_check = cfg_dict.get('smiles_check', smiles_check)
+            target_normalize = cfg_dict.get('target_normalize', target_normalize)
+            max_norm = cfg_dict.get('max_norm', max_norm)
+            use_cuda = cfg_dict.get('use_cuda', use_cuda)
+            use_amp = cfg_dict.get('use_amp', use_amp)
+            use_ddp = cfg_dict.get('use_ddp', use_ddp)
+            use_gpu = cfg_dict.get('use_gpu', use_gpu)
+            freeze_layers = cfg_dict.get('freeze_layers', freeze_layers)
+            freeze_layers_reversed = cfg_dict.get(
+                'freeze_layers_reversed', freeze_layers_reversed
+            )
+            load_model_dir = cfg_dict.get('load_model_dir', load_model_dir)
+            model_name = cfg_dict.get('model_name', model_name)
+            model_size = cfg_dict.get('model_size', model_size)
+            pretrained_model_path = cfg_dict.get(
+                'pretrained_model_path', pretrained_model_path
+            )
+            pretrained_dict_path = cfg_dict.get(
+                'pretrained_dict_path', pretrained_dict_path
+            )
+            conf_cache_level = cfg_dict.get('conf_cache_level', conf_cache_level)
+            known_keys = {
+                'task',
+                'data_type',
+                'epochs',
+                'learning_rate',
+                'batch_size',
+                'early_stopping',
+                'metrics',
+                'split',
+                'split_group_col',
+                'kfold',
+                'save_path',
+                'remove_hs',
+                'smiles_col',
+                'target_cols',
+                'target_col_prefix',
+                'target_anomaly_check',
+                'smiles_check',
+                'target_normalize',
+                'max_norm',
+                'use_cuda',
+                'use_amp',
+                'use_ddp',
+                'use_gpu',
+                'freeze_layers',
+                'freeze_layers_reversed',
+                'load_model_dir',
+                'model_name',
+                'model_size',
+                'pretrained_model_path',
+                'pretrained_dict_path',
+                'conf_cache_level',
+            }
+            params.update({k: v for k, v in cfg_dict.items() if k not in known_keys})
+
         if load_model_dir is not None:
             config_path = os.path.join(load_model_dir, 'config.yaml')
             logger.info('Load config file from {}'.format(config_path))
@@ -158,6 +240,8 @@ class MolTrain(object):
         config.load_model_dir = load_model_dir
         config.model_name = model_name
         config.model_size = model_size
+        config.pretrained_model_path = pretrained_model_path
+        config.pretrained_dict_path = pretrained_dict_path
         config.conf_cache_level = conf_cache_level
         self.save_path = save_path
         self.config = config

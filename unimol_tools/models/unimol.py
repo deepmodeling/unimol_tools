@@ -13,11 +13,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from addict import Dict
+import numpy as np
 
 from ..config import MODEL_CONFIG
 from ..data import Dictionary
 from ..utils import logger, pad_1d_tokens, pad_2d, pad_coords
-from ..weights import WEIGHT_DIR, weight_download
+from ..weights import get_weight_dir, weight_download
 from .transformers import TransformerEncoderWithPair
 
 BACKBONE = {
@@ -45,14 +46,28 @@ class UniMolModel(nn.Module):
         - classification_head: The final classification head of the model.
     """
 
-    def __init__(self, output_dim=2, data_type='molecule', **params):
-        """
-        Initializes the UniMolModel with specified parameters and data type.
+    def __init__(
+        self,
+        output_dim=2,
+        data_type='molecule',
+        pretrained_model_path=None,
+        pretrained_dict_path=None,
+        **params,
+    ):
+        """Initializes the UniMolModel with specified parameters and data type.
 
         :param output_dim: (int) The number of output dimensions (classes).
         :param data_type: (str) The type of data (e.g., 'molecule', 'protein').
         :param params: Additional parameters for model configuration.
+        :param pretrained_model_path: (str, optional) Path to a custom
+            pretrained model checkpoint. If ``None`` the default weights shipped
+            with ``unimol_tools`` will be used.
+        :param pretrained_dict_path: (str, optional) Path to the token
+            dictionary corresponding to ``pretrained_model_path``. If ``None``
+            and ``pretrained_model_path`` is provided, it is assumed that a file
+            named ``dict.txt`` exists in the same directory as the checkpoint.
         """
+
         super().__init__()
         if data_type == 'molecule':
             self.args = molecule_architecture()
@@ -72,14 +87,30 @@ class UniMolModel(nn.Module):
             name = data_type + '_' + name
         else:
             name = data_type
-        if not os.path.exists(os.path.join(WEIGHT_DIR, MODEL_CONFIG['weight'][name])):
-            weight_download(MODEL_CONFIG['weight'][name], WEIGHT_DIR)
-        if not os.path.exists(os.path.join(WEIGHT_DIR, MODEL_CONFIG['dict'][name])):
-            weight_download(MODEL_CONFIG['dict'][name], WEIGHT_DIR)
-        self.pretrain_path = os.path.join(WEIGHT_DIR, MODEL_CONFIG['weight'][name])
-        self.dictionary = Dictionary.load(
-            os.path.join(WEIGHT_DIR, MODEL_CONFIG['dict'][name])
-        )
+
+        if pretrained_model_path is not None:
+            self.pretrain_path = pretrained_model_path
+            if pretrained_dict_path is None:
+                pretrained_dict_path = os.path.join(
+                    os.path.dirname(pretrained_model_path), "dict.txt"
+                )
+            self.dictionary = Dictionary.load(pretrained_dict_path)
+        else:
+            weight_dir = get_weight_dir()
+            if not os.path.exists(
+                os.path.join(weight_dir, MODEL_CONFIG['weight'][name])
+            ):
+                weight_download(MODEL_CONFIG['weight'][name], weight_dir)
+            if not os.path.exists(
+                os.path.join(weight_dir, MODEL_CONFIG['dict'][name])
+            ):
+                weight_download(MODEL_CONFIG['dict'][name], weight_dir)
+            self.pretrain_path = os.path.join(
+                weight_dir, MODEL_CONFIG['weight'][name]
+            )
+            self.dictionary = Dictionary.load(
+                os.path.join(weight_dir, MODEL_CONFIG['dict'][name])
+            )
         self.mask_idx = self.dictionary.add_symbol("[MASK]", is_special=True)
         self.padding_idx = self.dictionary.pad()
         self.embed_tokens = nn.Embedding(
@@ -285,7 +316,7 @@ class UniMolModel(nn.Module):
                 )
             batch[k] = v
         try:
-            label = torch.tensor([s[1] for s in samples])
+            label = torch.tensor(np.array([s[1] for s in samples]))
         except:
             label = None
         return batch, label

@@ -1,0 +1,35 @@
+# Default training configuration for MolTrain
+# Values may be overridden via Hydra
+
+train_path: train.csv
+task: classification
+data_type: molecule
+epochs: 10
+learning_rate: 1e-4
+batch_size: 16
+early_stopping: 5
+metrics: none
+split: random
+split_group_col: scaffold
+kfold: 5
+save_path: ./exp
+remove_hs: false
+smiles_col: SMILES
+target_cols: null
+target_col_prefix: TARGET
+target_anomaly_check: false
+smiles_check: filter
+target_normalize: auto
+max_norm: 5.0
+use_cuda: true
+use_amp: true
+use_ddp: false
+use_gpu: all
+freeze_layers: null
+freeze_layers_reversed: false
+load_model_dir: null
+model_name: unimolv1
+model_size: 84m
+pretrained_model_path: null
+pretrained_dict_path: null
+conf_cache_level: 1

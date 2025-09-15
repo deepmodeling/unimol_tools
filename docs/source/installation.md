@@ -42,7 +42,7 @@ If the download is slow, you can use other mirrors, such as:
 export HF_ENDPOINT=https://hf-mirror.com
 ```
 
-Setting the `HF_ENDPOINT` environment variable specifies the mirror address for the Hugging Face Hub to use when downloading models.
+By default `unimol_tools` first tries the official Hugging Face endpoint. If that fails and `HF_ENDPOINT` is not set, it automatically retries using `https://hf-mirror.com`. Set `HF_ENDPOINT` to use a specific endpoint.
 
 ## Bohrium notebook
 

@@ -4,7 +4,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..models.transformers import TransformerEncoderWithPair, get_activation_fn
+from ..models.transformers import (
+    TransformerEncoderWithPair,
+    get_activation_fn,
+    init_bert_params,
+)
 from ..utils import pad_1d_tokens, pad_2d, pad_coords
 
 
@@ -52,6 +56,7 @@ class UniMolModel(nn.Module):
                 config.encoder_attention_heads, config.activation_fn
             )
         self.classification_heads = nn.ModuleDict()
+        self.apply(init_bert_params)
 
     def forward(
         self,
@@ -125,7 +130,7 @@ class UniMolModel(nn.Module):
             'src_tokens': pad_1d_tokens([item[0]['src_tokens'] for item in batch], self.padding_idx),
             'src_coord': pad_coords([item[0]['src_coord'] for item in batch], pad_idx=0.0),
             'src_distance': pad_2d([item[0]['src_distance'] for item in batch], pad_idx=0.0),
-            'src_edge_type': pad_2d([item[0]['src_edge_type'] for item in batch], self.padding_idx),
+            'src_edge_type': pad_2d([item[0]['src_edge_type'] for item in batch], pad_idx=0),
         }
         net_target = {
             'tgt_tokens': pad_1d_tokens([item[1]['tgt_tokens'] for item in batch], self.padding_idx),

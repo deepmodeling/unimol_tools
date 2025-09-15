@@ -22,7 +22,7 @@ class YamlHandler:
         :param file_path: (str) The yaml file path of the config.
         """
         if not os.path.exists(file_path):
-            raise FileExistsError(OSError)
+            raise FileNotFoundError(file_path)
         self.file_path = file_path
 
     def read_yaml(self, encoding='utf-8'):

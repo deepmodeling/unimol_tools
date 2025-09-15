@@ -50,6 +50,20 @@ def get_activation_fn(activation):
         raise RuntimeError("--activation-fn {} not supported".format(activation))
 
 
+def init_bert_params(module):
+    """Initialize weights the same way as the original Uni-Mol BERT modules."""
+    if not getattr(module, "can_global_init", True):
+        return
+    if isinstance(module, nn.Linear):
+        nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
+    elif isinstance(module, nn.Embedding):
+        nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        if module.padding_idx is not None:
+            nn.init.zeros_(module.weight[module.padding_idx])
+
+
 class SelfMultiheadAttention(nn.Module):
     def __init__(
         self,

@@ -60,8 +60,7 @@ class Logger(object):
         cwd_path = os.path.abspath(os.getcwd())
         self.log_path = os.path.join(cwd_path, "logs")
 
-        if not os.path.exists(self.log_path):
-            os.makedirs(self.log_path)
+        os.makedirs(self.log_path, exist_ok=True)
         self.backup_count = 5
 
         self.console_output_level = 'INFO'
@@ -101,7 +100,7 @@ class Logger(object):
 class HighlightFormatter(logging.Formatter):
     def format(self, record):
         if record.levelno == logging.WARNING:
-            record.msg = "\033[93m{}\033[0m".format(record.msg)  # 黄色高亮
+            record.msg = "\033[93m{}\033[0m".format(record.msg)  # yellow highlight
         return super().format(record)
 
 

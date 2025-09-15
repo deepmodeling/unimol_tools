@@ -1,0 +1,18 @@
+# Configuration for UniMolRepr
+# Values may be overridden via Hydra
+
+data_path: test.csv
+data_type: molecule
+batch_size: 32
+remove_hs: false
+model_name: unimolv1
+model_size: 84m
+smiles_col: SMILES
+use_cuda: true
+use_ddp: false
+use_gpu: all
+save_path: ./repr
+pretrained_model_path: null
+pretrained_dict_path: null
+return_atomic_reprs: false
+return_tensor: false

@@ -1,3 +1,4 @@
+import logging
 import pickle
 from functools import lru_cache
 
@@ -5,6 +6,37 @@ import lmdb
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+from .data_utils import numpy_seed
+
+logger = logging.getLogger(__name__)
+
+def smi2_2dcoords(smiles, atoms=None):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"Invalid SMILES string: {smiles}")
+    try:
+        mol = AllChem.AddHs(mol)
+        AllChem.Compute2DCoords(mol)
+    except Exception as exc:  # pragma: no cover - RDKit exceptions are varied
+        raise ValueError(f"Failed to compute 2D coordinates for '{smiles}': {exc}")
+    rdkit_atoms = [a.GetSymbol() for a in mol.GetAtoms()]
+    coordinates = mol.GetConformer().GetPositions().astype(np.float32)
+
+    if atoms is not None and len(rdkit_atoms) != len(atoms):
+        mask = [sym != "H" for sym in rdkit_atoms]
+        coordinates = coordinates[mask]
+        rdkit_atoms = [sym for sym in rdkit_atoms if sym != "H"]
+
+    if atoms is not None and len(rdkit_atoms) != len(atoms):
+        raise ValueError(
+            f"2D atom count {len(rdkit_atoms)} does not match LMDB atoms {len(atoms)}"
+        )
+
+    assert len(rdkit_atoms) == len(coordinates)
+    return coordinates
 
 
 class LMDBDataset(Dataset):
@@ -39,21 +71,32 @@ class LMDBDataset(Dataset):
             'idx': item.get('idx'),
             'atoms': atoms,
             'coordinates': coordinates,
-            'smiles': item.get('smiles'),
+            'smi': item.get('smi'),
         }
         return result
 
 class UniMolDataset(Dataset):
-    """
-    Loads LMDBDataset for UniMol models.
-    """
-    def __init__(self, lmdb_dataset, dictionary, remove_hs=False, max_atoms=256, seed=1, **params):
+    """Wraps an LMDBDataset and samples 3D or on-the-fly 2D conformers."""
+
+    def __init__(
+        self,
+        lmdb_dataset,
+        dictionary,
+        remove_hs=False,
+        max_atoms=256,
+        seed=1,
+        sample_conformer=True,
+        add_2d=True,
+        **params,
+    ):
         self.dataset = lmdb_dataset
         self.length = len(self.dataset)
         self.dictionary = dictionary
         self.remove_hs = remove_hs
         self.max_atoms = max_atoms
         self.seed = seed
+        self.sample_conformer = sample_conformer
+        self.add_2d = add_2d
         self.params = params
         self.mask_id = dictionary.add_symbol("[MASK]", is_special=True)
         self.set_epoch(0)  # Initialize epoch to 0
@@ -63,8 +106,8 @@ class UniMolDataset(Dataset):
 
     def set_epoch(self, epoch):
         self.epoch = epoch
-        np.random.seed(self.seed + epoch)
-        self.sort_order = np.random.permutation(self.length)
+        with numpy_seed(self.seed, epoch):
+            self.sort_order = np.random.permutation(self.length)
 
     def ordered_indices(self):
         return self.sort_order
@@ -76,82 +119,103 @@ class UniMolDataset(Dataset):
     @lru_cache(maxsize=16)
     def __getitem__cached__(self, epoch, idx):
         item = self.dataset[idx]
-        atoms = item['atoms']
-        coordinates = item['coordinates']
-        
+        atoms = item["atoms"]
+        coordinates = item["coordinates"]
+
         if atoms is None or coordinates is None:
-            raise ValueError(f"Invalid data at index {idx}: atoms or coordinates are None.")
-        
-        net_input, target = coords2unimol(
-            atoms=atoms, 
-            coordinates=coordinates, 
-            dictionary=self.dictionary, 
-            mask_id=self.mask_id,
-            noise_type=self.params.get('noise_type', 'trunc_normal'),
-            noise=self.params.get('noise', 1.0),
-            seed=self.params.get('seed', 1),
-            epoch=epoch,
-            mask_prob=self.params.get('mask_prob', 0.15),
-            leave_unmasked_prob=self.params.get('leave_unmasked_prob', 0.1),
-            random_token_prob=self.params.get('random_token_prob', 0.1),
-            max_atoms=self.max_atoms,
-            remove_hs=self.remove_hs,
-        )
+            raise ValueError(
+                f"Invalid data at index {idx}: atoms or coordinates are None."
+            )
+
+        coord_list = list(coordinates) if isinstance(coordinates, list) else [coordinates]
+        if self.add_2d and item.get("smi") is not None:
+            try:
+                coord_list.append(smi2_2dcoords(item["smi"], atoms))
+            except ValueError as exc:
+                logger.warning(
+                    "[UniMolDataset] failed to add 2D conformer for idx %s: %s",
+                    idx,
+                    exc,
+                )
+
+        with numpy_seed(self.seed, epoch, idx):
+            sel = np.random.randint(len(coord_list)) if self.sample_conformer else 0
+            coordinates = coord_list[sel]
+
+            net_input, target = coords2unimol(
+                atoms=atoms,
+                coordinates=coordinates,
+                dictionary=self.dictionary,
+                mask_id=self.mask_id,
+                noise_type=self.params.get("noise_type", "uniform"),
+                noise=self.params.get("noise", 1.0),
+                seed=self.params.get("seed", 1),
+                epoch=epoch,
+                index=idx,
+                mask_prob=self.params.get("mask_prob", 0.15),
+                leave_unmasked_prob=self.params.get("leave_unmasked_prob", 0.05),
+                random_token_prob=self.params.get("random_token_prob", 0.05),
+                max_atoms=self.max_atoms,
+                remove_hs=self.remove_hs,
+            )
         return net_input, target
 
 def coords2unimol(
-        atoms, 
-        coordinates, 
-        dictionary, 
-        mask_id,
-        noise_type,
-        noise=1.0,
-        seed=1,
-        epoch=0,
-        mask_prob=0.15,
-        leave_unmasked_prob=0.1,
-        random_token_prob=0.1,
-        max_atoms=256, 
-        remove_hs=True, 
-        **params
-    ):
-    np.random.seed(seed + epoch)
-    torch.manual_seed(seed + epoch)
+    atoms,
+    coordinates,
+    dictionary,
+    mask_id,
+    noise_type,
+    noise=1.0,
+    seed=1,
+    epoch=0,
+    index=0,
+    mask_prob=0.15,
+    leave_unmasked_prob=0.05,
+    random_token_prob=0.05,
+    max_atoms=256,
+    remove_hs=True,
+    **params,
+):
+    with numpy_seed(seed, epoch, index):
+        assert len(atoms) == len(coordinates), "coordinates shape does not align with atoms"
+        coordinates = torch.tensor(coordinates, dtype=torch.float32)
+        if remove_hs:
+            idx = [i for i, atom in enumerate(atoms) if atom != "H"]
+            atoms_no_h = [atom for atom in atoms if atom != "H"]
+            coordinates_no_h = coordinates[idx]
+            assert (
+                len(atoms_no_h) == len(coordinates_no_h)
+            ), "coordinates shape is not align with atoms"
+            atoms, coordinates = atoms_no_h, coordinates_no_h
 
-    assert len(atoms) == len(coordinates), "coordinates shape does not align with atoms"
-    coordinates = torch.tensor(coordinates, dtype=torch.float32)
-    if remove_hs:
-        idx = [i for i, atom in enumerate(atoms) if atom != 'H']
-        atoms_no_h = [atom for atom in atoms if atom != 'H']
-        coordinates_no_h = coordinates[idx]
-        assert len(atoms_no_h) == len(coordinates_no_h), "coordinates shape is not align with atoms"
-        atoms, coordinates = atoms_no_h, coordinates_no_h
+        # Crop atoms and coordinates if exceeding max_atoms
+        if len(atoms) > max_atoms:
+            sel = np.random.choice(len(atoms), max_atoms, replace=False)
+            atoms = [atoms[i] for i in sel]
+            coordinates = coordinates[sel]
 
-    # Crop atoms and coordinates if exceeding max_atoms
-    if len(atoms) > max_atoms:
-        idx = torch.randperm(len(atoms))[:max_atoms]
-        atoms = [atoms[i] for i in idx.tolist()]
-        coordinates = coordinates[idx]
+        # Normalize coordinates
+        coordinates = coordinates - coordinates.mean(dim=0)
 
-    # Normalize coordinates
-    coordinates = coordinates - coordinates.mean(dim=0)
-
-    # Add noise and mask
-    src_tokens, src_coord, tgt_tokens = apply_noise_and_mask(
-        src_tokens=torch.tensor([dictionary.index(atom) for atom in atoms], dtype=torch.long),
-        coordinates=coordinates,
-        dictionary=dictionary,
-        mask_id=mask_id,
-        noise_type=noise_type,
-        noise=noise,
-        mask_prob=mask_prob,
-        leave_unmasked_prob=leave_unmasked_prob,
-        random_token_prob=random_token_prob
-    )
+        # Add noise and mask
+        src_tokens, src_coord, tgt_tokens = apply_noise_and_mask(
+            src_tokens=torch.tensor(
+                [dictionary.index(atom) for atom in atoms], dtype=torch.long
+            ),
+            coordinates=coordinates,
+            dictionary=dictionary,
+            mask_id=mask_id,
+            noise_type=noise_type,
+            noise=noise,
+            mask_prob=mask_prob,
+            leave_unmasked_prob=leave_unmasked_prob,
+            random_token_prob=random_token_prob,
+        )
 
     # Pad tokens
     src_tokens = torch.cat([torch.tensor([dictionary.bos()]), src_tokens, torch.tensor([dictionary.eos()])], dim=0)
-    tgt_tokens = torch.cat([torch.tensor([dictionary.bos()]), tgt_tokens, torch.tensor([dictionary.eos()])], dim=0)
+    tgt_tokens = torch.cat([torch.tensor([dictionary.pad()]), tgt_tokens, torch.tensor([dictionary.pad()])], dim=0)
 
     # Pad coordinates
     pad = torch.zeros((1, 3), dtype=torch.float32)
@@ -167,14 +231,14 @@ def coords2unimol(
     src_edge_type = src_tokens.view(-1, 1) * len(dictionary) + src_tokens.view(1, -1)
 
     return {
-        'src_tokens': src_tokens,
-        'src_coord': src_coord,
-        'src_distance': src_distance,
-        'src_edge_type': src_edge_type,
-    },{
-        'tgt_tokens': tgt_tokens,
-        'tgt_coordinates': tgt_coordinates,
-        'tgt_distance': tgt_distance,
+        "src_tokens": src_tokens,
+        "src_coord": src_coord,
+        "src_distance": src_distance,
+        "src_edge_type": src_edge_type,
+    }, {
+        "tgt_tokens": tgt_tokens,
+        "tgt_coordinates": tgt_coordinates,
+        "tgt_distance": tgt_distance,
     }
 
 
@@ -186,8 +250,8 @@ def apply_noise_and_mask(
         noise_type, 
         noise=1.0, 
         mask_prob=0.15, 
-        leave_unmasked_prob=0.1, 
-        random_token_prob=0.1
+        leave_unmasked_prob=0.05, 
+        random_token_prob=0.05
     ):
     """
     Apply noise and masking to the source tokens.

@@ -1,0 +1,6 @@
+# Configuration for MolPredict
+# Values may be overridden via Hydra
+
+data_path: test.csv
+load_model: ./exp
+save_path: ./predict
