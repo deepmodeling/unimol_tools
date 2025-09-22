@@ -73,6 +73,7 @@ export UNIMOL_WEIGHT_DIR=/path/to/your/weights/dir/
 ```
 
 ## News
+- 2025-09-22: Lightweight pre-training tools are now available in Unimol_tools!
 - 2025-05-26: Unimol_tools is now independent from the Uni-Mol repository!
 - 2025-03-28: Unimol_tools now support Distributed Data Parallel (DDP)!
 - 2024-11-22: Unimol V2 has been added to Unimol_tools!
