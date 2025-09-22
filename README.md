@@ -97,8 +97,29 @@ clf = MolTrain(
     # pretrained_dict_path='/path/to/dict.txt',
 )
 clf.fit(data = train_data)
-# currently support data with smiles based csv/txt file, and
-# custom dict of {'atoms':[['C','C'],['C','H','O']], 'coordinates':[coordinates_1,coordinates_2]}
+# currently support data with smiles based csv/txt file, and sdf file with mol,
+# and custom dict of {'atoms':[['C','C'],['C','H','O']], 'coordinates':[coordinates_1,coordinates_2]}
+
+# The dict format can refer to the following format, or be obtained from sdf, 
+# which can also be directly input into the model.
+train_sdf = PandasTools.LoadSDF('exp/unimol_conformers_train.sdf')
+train_dict = {
+    'atoms': [list(atom.GetSymbol() for atom in mol.GetAtoms()) for mol in train_sdf['ROMol']],
+    # atoms[0]: ['C', 'C', 'O', 'C', 'O', 'C', ...]
+    'coordinates': [mol.GetConformers()[0].GetPositions() for mol in train_sdf['ROMol']],
+    # coordinates[0]: array([[ 6.6462, -1.8268,  1.9275],
+    #                        [ 6.1552, -1.9367,  0.4873],
+    #                        [ 5.1832, -0.8757,  0.3007],
+    #                        [ 5.4651, -0.0272, -0.7266],
+    #                        [ 4.8586, -0.0844, -1.7917],
+    #                        [ 6.5362,  0.9767, -0.3742],
+    #                        ...,])
+    'TARGET': train_sdf['TARGET'].tolist()
+    # TARGET: [0, 1, 0, 0, 1, 0, ...]
+}
+# clf.fit(data = train_sdf)
+# clf.fit(data = train_dict)
+
 
 clf = MolPredict(load_model='../exp')
 res = clf.predict(data = test_data)
