@@ -60,8 +60,7 @@ class Logger(object):
         cwd_path = os.path.abspath(os.getcwd())
         self.log_path = os.path.join(cwd_path, "logs")
 
-        if not os.path.exists(self.log_path):
-            os.makedirs(self.log_path)
+        os.makedirs(self.log_path, exist_ok=True)
         self.backup_count = 5
 
         self.console_output_level = 'INFO'

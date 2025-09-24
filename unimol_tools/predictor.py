@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
+from omegaconf import DictConfig, OmegaConf
 
 from .data import DataHub
 from .models import UniMolModel, UniMolV2Model
@@ -37,6 +38,7 @@ class UniMolRepr(object):
 
     def __init__(
         self,
+        cfg: DictConfig | None = None,
         data_type='molecule',
         batch_size=32,
         remove_hs=False,
@@ -47,6 +49,8 @@ class UniMolRepr(object):
         use_ddp=False,
         use_gpu='all',
         save_path=None,
+        pretrained_model_path=None,
+        pretrained_dict_path=None,
         **kwargs,
     ):
         """
@@ -61,18 +65,47 @@ class UniMolRepr(object):
         :param use_cuda: bool, default=True, whether to use gpu.
         :param use_ddp: bool, default=False, whether to use distributed data parallel.
         :param use_gpu: str, default='all', which gpu to use.
+        :param save_path: str, default=None, path to save representation result.
+        :param pretrained_model_path: str, default=None, path to pretrained model.
+        :param pretrained_dict_path: str, default=None, path to pretrained model's dict file.
+        :param kwargs: other parameters.
         """
+        if cfg is not None:
+            cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+            data_type = cfg_dict.get('data_type', data_type)
+            batch_size = cfg_dict.get('batch_size', batch_size)
+            remove_hs = cfg_dict.get('remove_hs', remove_hs)
+            model_name = cfg_dict.get('model_name', model_name)
+            model_size = cfg_dict.get('model_size', model_size)
+            smiles_col = cfg_dict.get('smiles_col', smiles_col)
+            use_cuda = cfg_dict.get('use_cuda', use_cuda)
+            use_ddp = cfg_dict.get('use_ddp', use_ddp)
+            use_gpu = cfg_dict.get('use_gpu', use_gpu)
+            save_path = cfg_dict.get('save_path', save_path)
+            pretrained_model_path = cfg_dict.get(
+                'pretrained_model_path', pretrained_model_path
+            )
+            pretrained_dict_path = cfg_dict.get(
+                'pretrained_dict_path', pretrained_dict_path
+            )
+
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() and use_cuda else "cpu"
         )
         if model_name == 'unimolv1':
             self.model = UniMolModel(
-                output_dim=1, data_type=data_type, remove_hs=remove_hs
+                output_dim=1,
+                data_type=data_type,
+                remove_hs=remove_hs,
+                pretrained_model_path=pretrained_model_path,
+                pretrained_dict_path=pretrained_dict_path,
             ).to(self.device)
         elif model_name == 'unimolv2':
-            self.model = UniMolV2Model(output_dim=1, model_size=model_size).to(
-                self.device
-            )
+            self.model = UniMolV2Model(
+                output_dim=1,
+                model_size=model_size,
+                pretrained_model_path=pretrained_model_path,
+            ).to(self.device)
         else:
             raise ValueError('Unknown model name: {}'.format(model_name))
         self.model.eval()
@@ -87,6 +120,8 @@ class UniMolRepr(object):
             'use_ddp': use_ddp,
             'use_gpu': use_gpu,
             'save_path': save_path,
+            'pretrained_model_path': pretrained_model_path,
+            'pretrained_dict_path': pretrained_dict_path,
         }
 
     def get_repr(self, data=None, return_atomic_reprs=False, return_tensor=False):

@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
     name="unimol_tools",
-    version="0.1.4.post1",
+    version="0.1.5",
     description=(
         "unimol_tools is a Python package for property prediction with Uni-Mol in molecule, materials and protein."
     ),
@@ -33,6 +33,10 @@ setup(
         "scikit-learn>=1.5.0",
         "numba",
         "tqdm",
+        "hydra-core",
+        "omegaconf",
+        "tensorboard",
+        "lmdb",
     ],
     python_requires=">=3.9",
     include_package_data=True,

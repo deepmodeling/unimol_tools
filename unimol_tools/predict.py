@@ -9,6 +9,7 @@ import json
 
 import joblib
 import numpy as np
+from omegaconf import DictConfig, OmegaConf
 
 from .data import DataHub
 from .models import NNModel
@@ -19,12 +20,15 @@ from .utils import YamlHandler, logger
 class MolPredict(object):
     """A :class:`MolPredict` class is responsible for interface of predicting process of molecular data."""
 
-    def __init__(self, load_model=None):
+    def __init__(self, load_model=None, cfg: DictConfig | None = None):
         """
         Initialize a :class:`MolPredict` class.
 
         :param load_model: str, default=None, path of model to load.
         """
+        if cfg is not None:
+            cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+            load_model = cfg_dict.get("load_model", load_model)
         if not load_model:
             raise ValueError("load_model is empty")
         self.load_model = load_model

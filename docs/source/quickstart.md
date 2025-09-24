@@ -39,6 +39,36 @@ pred = clf.fit(data = train_data)
 clf = MolPredict(load_model='../exp')
 res = clf.predict(data = test_data)
 ```
+
+### Command-line utilities
+
+Training, prediction, and representation can also be launched from the
+command line by overriding options in the YAML config files.
+
+#### Training
+```bash
+python -m unimol_tools.cli.run_train \
+    train_path=train.csv \
+    task=regression \
+    save_path=./exp \
+    smiles_col=smiles \
+    target_cols=[target1] \
+    epochs=10 \
+    learning_rate=1e-4 \
+    batch_size=16 \
+    kfold=5
+```
+
+#### Prediction
+```bash
+python -m unimol_tools.cli.run_predict load_model=./exp data_path=test.csv
+```
+
+#### Representation
+```bash
+python -m unimol_tools.cli.run_repr data_path=test.csv smiles_col=smiles
+```
+
 ## Uni-Mol molecule and atoms level representation
 
 Uni-Mol representation can easily be achieved as follow.
@@ -60,6 +90,51 @@ print(np.array(unimol_repr['cls_repr']).shape)
 # atomic level repr, align with rdkit mol.GetAtoms()
 print(np.array(unimol_repr['atomic_reprs']).shape)
 ```
+## Molecule pretraining
+
+Uni-Mol can be pretrained from scratch using the ``run_pretrain`` utility. The
+script is driven by Hydra, so configuration options are supplied on the command
+line. The examples below demonstrate common setups for LMDB and CSV inputs.
+
+### LMDB dataset
+
+```bash
+torchrun --standalone --nproc_per_node=NUM_GPUS \
+    -m unimol_tools.cli.run_pretrain \
+    dataset.train_path=train.lmdb \
+    dataset.valid_path=valid.lmdb \
+    dataset.data_type=lmdb \
+    dataset.dict_path=dict.txt \
+    training.total_steps=10000 \
+    training.batch_size=16 \
+    training.update_freq=1
+```
+
+`dataset.dict_path` is optional. The effective batch size is
+`n_gpu * training.batch_size * training.update_freq`.
+
+### CSV dataset
+
+```bash
+torchrun --standalone --nproc_per_node=NUM_GPUS \
+    -m unimol_tools.cli.run_pretrain \
+    dataset.train_path=train.csv \
+    dataset.valid_path=valid.csv \
+    dataset.data_type=csv \
+    dataset.smiles_column=smiles \
+    training.total_steps=10000 \
+    training.batch_size=16 \
+    training.update_freq=1
+```
+
+To scale across multiple machines, include the appropriate `torchrun`
+arguments, e.g. `--nnodes`, `--node_rank`, `--master_addr` and
+`--master_port`.
+
+Checkpoints and the dictionary are written to the output directory. When GPU
+memory is limited, increase `training.update_freq` to accumulate gradients while
+keeping the effective batch size `n_gpu * training.batch_size * training.update_freq`.
+
 ## Continue training (Re-train)
 
 ```python
