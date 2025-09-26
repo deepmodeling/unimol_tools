@@ -122,6 +122,7 @@ class UniMolRepr(object):
             'save_path': save_path,
             'pretrained_model_path': pretrained_model_path,
             'pretrained_dict_path': pretrained_dict_path,
+            'max_atoms': kwargs.get('max_atoms', 256),
         }
 
     def get_repr(self, data=None, return_atomic_reprs=False, return_tensor=False):
