@@ -51,6 +51,7 @@ class UniMolRepr(object):
         save_path=None,
         pretrained_model_path=None,
         pretrained_dict_path=None,
+        max_atoms=256,
         **kwargs,
     ):
         """
@@ -68,6 +69,7 @@ class UniMolRepr(object):
         :param save_path: str, default=None, path to save representation result.
         :param pretrained_model_path: str, default=None, path to pretrained model.
         :param pretrained_dict_path: str, default=None, path to pretrained model's dict file.
+        :param max_atoms: int, default=256, max atoms of molecular to be encode.
         :param kwargs: other parameters.
         """
         if cfg is not None:
@@ -88,6 +90,7 @@ class UniMolRepr(object):
             pretrained_dict_path = cfg_dict.get(
                 'pretrained_dict_path', pretrained_dict_path
             )
+            max_atoms = cfg_dict.get('max_atoms', max_atoms)
 
         self.device = torch.device(
             "cuda:0" if torch.cuda.is_available() and use_cuda else "cpu"
@@ -122,6 +125,7 @@ class UniMolRepr(object):
             'save_path': save_path,
             'pretrained_model_path': pretrained_model_path,
             'pretrained_dict_path': pretrained_dict_path,
+            'max_atoms': max_atoms,
         }
 
     def get_repr(self, data=None, return_atomic_reprs=False, return_tensor=False):
