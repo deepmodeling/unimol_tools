@@ -55,6 +55,9 @@ class MolDataReader(object):
                 data = self._convert_numeric_columns(data)
             elif data.endswith('.csv'):
                 data = pd.read_csv(data)
+            elif data.endswith('.pdb'):
+                mol = Chem.MolFromPDBFile(data)
+                data = pd.DataFrame([mol], columns=['pdb_mol'])
             else:
                 raise ValueError('Unknown file type: {}'.format(data))
         elif isinstance(data, dict):
@@ -82,6 +85,8 @@ class MolDataReader(object):
             if smiles_col in data and isinstance(data[smiles_col], str):
                 # if the smiles_col is a single string, convert it to a list
                 data[smiles_col] = [data[smiles_col]]
+            if 'residue' in data:
+                data['residue'] = [data['residue']] # for pocket
                 
             data = pd.DataFrame(data)
 
@@ -173,6 +178,8 @@ class MolDataReader(object):
 
         if 'ROMol' in data.columns:
             dd['mols'] = data['ROMol'].tolist()
+        elif 'pdb_mol' in data.columns:
+            dd['mols'] = data['pdb_mol'].tolist()
 
         return dd
 
