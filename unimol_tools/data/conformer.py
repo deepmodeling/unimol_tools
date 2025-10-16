@@ -140,6 +140,7 @@ class ConformerGen(object):
                 self.dictionary,
                 self.max_atoms,
                 remove_hs=self.remove_hs,
+                data_type=self.data_type,
             )
             return feat, mol
         else:
@@ -158,6 +159,7 @@ class ConformerGen(object):
                     self.dictionary,
                     self.max_atoms,
                     remove_hs=self.remove_hs,
+                    data_type=self.data_type,
                 )
             )
         return inputs
@@ -174,6 +176,7 @@ class ConformerGen(object):
                     self.dictionary,
                     self.max_atoms,
                     remove_hs=self.remove_hs,
+                    data_type=self.data_type,
                 )
             )
         return inputs
@@ -324,7 +327,7 @@ def inner_coords(atoms, coordinates, remove_hs=True):
 
 
 def coords2unimol(
-    atoms, coordinates, dictionary, max_atoms=256, remove_hs=True, **params
+    atoms, coordinates, dictionary, max_atoms=256, remove_hs=True, data_type='molecule', **params
 ):
     """
     Converts atom symbols and coordinates into a unified molecular representation.
@@ -347,9 +350,14 @@ def coords2unimol(
         atoms = atoms[idx]
         coordinates = coordinates[idx]
     # tokens padding
+    if data_type == 'pocket':
+        src_tokens_mid = [dictionary.index(atom[0]) for atom in atoms]
+    else:
+        src_tokens_mid = [dictionary.index(atom) for atom in atoms]
+
     src_tokens = np.array(
         [dictionary.bos()]
-        + [dictionary.index(atom) for atom in atoms]
+        + src_tokens_mid
         + [dictionary.eos()]
     )
     src_distance = np.zeros((len(src_tokens), len(src_tokens)))

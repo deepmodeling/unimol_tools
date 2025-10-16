@@ -77,6 +77,8 @@ class UniMolModel(nn.Module):
             self.args = protein_architecture()
         elif data_type == 'crystal':
             self.args = crystal_architecture()
+        elif data_type == 'pocket':
+            self.args = molecule_architecture()
         else:
             raise ValueError('Current not support data type: {}'.format(data_type))
         self.output_dim = output_dim
