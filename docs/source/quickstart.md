@@ -77,7 +77,7 @@ Uni-Mol representation can easily be achieved as follow.
 import numpy as np
 from unimol_tools import UniMolRepr
 # single smiles unimol representation
-clf = UniMolRepr(data_type='molecule', 
+clf = UniMolRepr(data_type='molecule', # avaliable: molecule, oled, pocket. Only for unimolv1.
                  remove_hs=False,
                  model_name='unimolv1', # avaliable: unimolv1, unimolv2
                  model_size='84m', # work when model_name is unimolv2. avaliable: 84m, 164m, 310m, 570m, 1.1B.
@@ -89,6 +89,18 @@ unimol_repr = clf.get_repr(smiles_list, return_atomic_reprs=True)
 print(np.array(unimol_repr['cls_repr']).shape)
 # atomic level repr, align with rdkit mol.GetAtoms()
 print(np.array(unimol_repr['atomic_reprs']).shape)
+
+# For the pocket, please select and extract the atoms nearby; the total number of atoms should preferably not exceed 256.
+clf = UniMolRepr(data_type='pocket',
+                 remove_hs=False,
+                 )
+pocket_dict = {
+    'atoms': atoms,
+    'coordinates': coordinates,
+    'residue': residue, # Optional
+}
+unimol_repr = clf.get_repr(pocket_dict, return_atomic_reprs=True)
+
 ```
 ## Molecule pretraining
 
