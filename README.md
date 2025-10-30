@@ -10,6 +10,7 @@
 [![GitHub contributors](https://img.shields.io/github/contributors/deepmodeling/unimol_tools.svg)](https://github.com/deepmodeling/unimol_tools/graphs/contributors)
 ![Maintained](https://img.shields.io/badge/Maintained%3F-yes-blue.svg)
 [![Documentation Status](https://readthedocs.org/projects/unimol/badge/?version=latest)](https://unimol.readthedocs.io/en/latest/?badge=latest)
+[![DeepWiki](https://img.shields.io/badge/DeepWiki-Yes-blue.svg)](https://deepwiki.com/deepmodeling/unimol_tools)
 
 Unimol_tools is a easy-use wrappers for property prediction,representation and downstreams with Uni-Mol.
 
