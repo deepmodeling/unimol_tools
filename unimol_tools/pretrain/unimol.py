@@ -97,6 +97,8 @@ class UniMolModel(nn.Module):
 
         if self.config.masked_token_loss > 0:
             logits = self.lm_head(encoder_rep, encoder_masked_tokens)
+        else:
+            logits = encoder_rep
         if self.config.masked_coord_loss > 0:
             coords_emb = src_coord
             if padding_mask is not None:
