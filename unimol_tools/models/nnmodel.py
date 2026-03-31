@@ -129,6 +129,8 @@ class NNModel(object):
         else:
             pass
         freeze_layers = params.get('freeze_layers', None)
+        if freeze_layers == "backbone":
+            freeze_layers = ["embed_tokens", "encoder", "gbf", "gbf_proj"]
         freeze_layers_reversed = params.get('freeze_layers_reversed', False)
         if model_name in NNMODEL_REGISTER:
             model = NNMODEL_REGISTER[model_name](**params)
@@ -143,6 +145,11 @@ class NNModel(object):
                     layer_param.requires_grad = not (
                         freeze_layers_reversed ^ should_freeze
                     )
+            learnable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in model.parameters())
+            logger.info("Initialized model '{}' with {} learnable parameters out of {} total parameters.".format(
+                model_name, learnable_params, total_params
+            ))
         else:
             raise ValueError('Unknown model: {}'.format(self.model_name))
         return model

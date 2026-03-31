@@ -17,6 +17,7 @@ class UniMolModel(nn.Module):
         super(UniMolModel, self).__init__()
         self.config = config
         self.dictionary = dictionary
+        self.mask_idx = self.dictionary.add_symbol("[MASK]", is_special=True)
         self.padding_idx = dictionary.pad()
         self.embed_tokens = nn.Embedding(len(dictionary), config.encoder_embed_dim, padding_idx=self.padding_idx)
         self.encoder = TransformerEncoderWithPair(

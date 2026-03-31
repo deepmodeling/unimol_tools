@@ -8,13 +8,14 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from transformers import get_linear_schedule_with_warmup
+
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import get_original_cwd
 
 from .config import GenerationConfig
 from .dataset import VAEDataset
 from .loss import VAELoss
+from ..tasks import get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
 

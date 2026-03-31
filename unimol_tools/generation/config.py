@@ -33,7 +33,7 @@ class ModelConfig:
         metadata={"help": "Dimension of the latent space."},
     )
     encoder_layers: int = field(
-        default=6,
+        default=15,
         metadata={"help": "Number of encoder layers."},
     )
     decoder_layers: int = field(
@@ -49,7 +49,7 @@ class ModelConfig:
         metadata={"help": "Decoder embedding dimension."},
     )
     encoder_attention_heads: int = field(
-        default=8,
+        default=64,
         metadata={"help": "Number of encoder attention heads."},
     )
     decoder_attention_heads: int = field(
@@ -73,7 +73,7 @@ class ModelConfig:
         metadata={"help": "Dropout probability."},
     )
     max_seq_len: int = field(
-        default=256,
+        default=512,
         metadata={"help": "Maximum sequence length."},
     )
     # Fields required by UniMolModel (pretrain)
@@ -83,6 +83,11 @@ class ModelConfig:
     emb_dropout: float = field(default=0.1, metadata={"help": "Embedding dropout."})
     attention_dropout: float = field(default=0.1, metadata={"help": "Attention dropout."})
     activation_dropout: float = field(default=0.0, metadata={"help": "Activation dropout."})
+    pooler_dropout: float = field(default=0.2, metadata={"help": "Pooler dropout."})
+    pooler_activation_fn: str = field(default="tanh", metadata={"help": "Pooler activation function."})
+    post_ln: bool = field(default=False, metadata={"help": "Post layer norm."})
+    backbone: str = field(default="transformer", metadata={"help": "Model backbone."})
+    kernel: str = field(default="gaussian", metadata={"help": "Kernel function."})
     delta_pair_repr_norm_loss: float = field(default=-1.0, metadata={"help": "Delta pair repr norm loss."})
 
 
