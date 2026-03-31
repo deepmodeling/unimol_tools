@@ -7,6 +7,7 @@ from unimol_tools.data import Dictionary
 import numpy as np
 import torch
 from rdkit import Chem
+from tqdm import tqdm
 
 import re
 
@@ -40,90 +41,185 @@ def collate_tokens(values, pad_idx, left_pad=False, move_eos_to_beginning=False)
     return res
 
 class SmilesTokenizer:
-    def __init__(self, vae_dict, max_len=256):
+    def __init__(self, vae_dict, encoder_dict=None, max_len=256):
         self.vae_dict = vae_dict
+        self.encoder_dict = encoder_dict
         self.max_len = max_len
         smi_regex = r"(\[[^\]]+\]|Br?|Cl?|[NnCcOoSsPpFfI]|\(|\)|\.|=|#|\\|\/|:|~|@|\?|>|\*|\+|-|%\d\d|\d)"
         self.specie_re = re.compile(smi_regex)
 
+    # def tokenize(self, smiles):
+    #     return self.specie_re.findall(smiles)
     def tokenize(self, smiles):
-        return self.specie_re.findall(smiles)
+        tokens = []
+        i = 0
+        L = len(smiles)
 
+        while i < L:
+            ch = smiles[i]
+
+            # ---------- bracket ----------
+            if ch == '[':
+                tokens.append('[')
+                i += 1
+
+                # 元素（1或2字符）
+                if i + 1 < L and smiles[i:i+2] in self.encoder_dict.symbols:
+                    tokens.append(smiles[i:i+2])
+                    i += 2
+                else:
+                    tokens.append(smiles[i])
+                    i += 1
+
+                # 解析 bracket 内
+                while i < L and smiles[i] != ']':
+                    ch = smiles[i]
+
+                    # 手性
+                    if smiles[i:i+2] == '@@':
+                        tokens.append('@@')
+                        i += 2
+                    elif ch == '@':
+                        tokens.append('@')
+                        i += 1
+
+                    # H
+                    elif ch == 'H':
+                        j = i + 1
+                        while j < L and smiles[j].isdigit():
+                            j += 1
+                        tokens.append(smiles[i:j])  # H, H2, H3
+                        i = j
+
+                    # 电荷
+                    elif ch in '+-':
+                        j = i + 1
+                        while j < L and smiles[j].isdigit():
+                            j += 1
+                        tokens.append(smiles[i:j])  # +, -2
+                        i = j
+
+                    else:
+                        tokens.append(ch)
+                        i += 1
+
+                tokens.append(']')
+                i += 1
+                continue
+
+            # ---------- 两字符原子 ----------
+            if i + 1 < L and smiles[i:i+2] in self.encoder_dict.symbols:
+                tokens.append(smiles[i:i+2])
+                i += 2
+                continue
+
+            # ---------- 普通字符 ----------
+            tokens.append(ch)
+            i += 1
+
+        return tokens
     def encode(self, smiles):
         tokens = self.tokenize(smiles)
         tokens = tokens[:self.max_len-2]  # Reserve space for BOS/EOS
         return [self.vae_dict.index(t) for t in tokens]
 
-def _vae_dict_worker(lmdb_path, start, end):
-    env = lmdb.open(lmdb_path, subdir=False, readonly=True, lock=False, readahead=False, max_readers=1)
+# -------- Worker --------
+def _vae_dict_worker(worker_id, num_workers, lmdb_path, encoder_dict, log_interval=50000):
+    env = lmdb.open(
+        lmdb_path,
+        subdir=False,
+        readonly=True,
+        lock=False,
+        readahead=True,
+        max_readers=1
+    )
+
     txn = env.begin()
+    cursor = txn.cursor()
+
+    tokenizer = SmilesTokenizer(None, encoder_dict)
+
     smi_tokens = set()
-    tokenizer = SmilesTokenizer(None)
-    
-    for idx in range(start, end):
-        data = txn.get(str(idx).encode())
-        if data is None: continue
+    local_count = 0
+
+    for i, (_, data) in enumerate(cursor):
+        if i % num_workers != worker_id:
+            continue
+
+        if data is None:
+            continue
+
         item = pickle.loads(data)
-        
-        # 提取 SMILES 并切分
-        smi = item.get("smiles")
+
+        smi = item.get("smi")
         if smi:
-            # 如果 smi 是字节串，先解码
             smi_str = smi.decode() if isinstance(smi, bytes) else smi
-            tokens = tokenizer.tokenize(smi_str)
-            smi_tokens.update(tokens)
-            
+            smi_tokens.update(tokenizer.tokenize(smi_str))
+
+        local_count += 1
+
+        # ⭐ 日志输出（关键）
+        if local_count % log_interval == 0:
+            print(f"[Worker {worker_id}] processed {local_count} samples", flush=True)
+
+    print(f"[Worker {worker_id}] DONE. Total processed: {local_count}", flush=True)
+
     env.close()
     return smi_tokens
 
-def build_vae_dictionary(lmdb_path, encoder_dict, save_path=None, num_workers=1):
-    """
-    Args:
-        lmdb_path: 数据路径
-        encoder_dict: 已有的 Dictionary 对象 (Uni-Mol Encoder 使用)
-        save_path: 保存 vae_dict.txt 的路径
-    """
-    # 1. 获取 LMDB 总长度
-    env = lmdb.open(lmdb_path, subdir=False, readonly=True, lock=False, max_readers=256)
-    length = env.begin().stat()["entries"]
+
+# -------- Main --------
+def build_vae_dictionary(
+    lmdb_path,
+    encoder_dict,
+    save_path=None,
+    num_workers=8
+):
+    print("🚀 Building VAE Dictionary (log mode)...")
+
+    # -------- 获取样本数 --------
+    env = lmdb.open(lmdb_path, subdir=False, readonly=True, lock=False)
+    total_samples = env.begin().stat()["entries"]
     env.close()
 
-    # 2. 并行提取 LMDB 中的所有 SMILES Token
-    all_smi_tokens = set()
-    chunk = (length + num_workers - 1) // num_workers
-    args = [(lmdb_path, i * chunk, min((i + 1) * chunk, length)) for i in range(num_workers)]
-    
-    with mp.Pool(num_workers) as pool:
-        for s in pool.starmap(_vae_dict_worker, args):
-            all_smi_tokens.update(s)
+    print(f"Total samples: {total_samples}")
+    print(f"Num workers: {num_workers}")
 
-    # 3. 合并词表
-    # 首先继承 encoder_dict 的所有符号 (保持顺序一致)
-    # Dictionary 对象通常有 .symbols 属性，或者通过索引遍历
+    # -------- 启动多进程 --------
+    with mp.Pool(num_workers) as pool:
+        results = pool.starmap(
+            _vae_dict_worker,
+            [(wid, num_workers, lmdb_path, encoder_dict) for wid in range(num_workers)]
+        )
+
+    # -------- 汇总 token --------
+    print("Merging tokens...")
+
+    all_smi_tokens = set()
+    for s in results:
+        all_smi_tokens.update(s)
+
+    # -------- 构建词表 --------
     base_symbols = list(encoder_dict.symbols)
-    
-    # for special in ["[BOS]", "[EOS]"]:
-    #     if special not in base_symbols:
-    #         base_symbols.append(special)
-            
-    print(base_symbols)
-    # 强制补充一些即便当前数据集没出现，但未来生成可能需要的语法符号
+
     grammar_fixed = ['=', '#', '(', ')', '.', '/', '\\', '+', '-', ':']
-    
-    # 寻找所有不在 base_symbols 里的新 token
     new_tokens = all_smi_tokens.union(set(grammar_fixed))
+
     unique_new_tokens = sorted(list(new_tokens - set(base_symbols)))
-    
     final_dictionary = base_symbols + unique_new_tokens
 
+    # -------- 保存 --------
     if save_path is None:
         save_path = os.path.join(os.path.dirname(lmdb_path), "vae_dictionary.txt")
-    
-    with open(save_path, "wb") as f:
-        np.savetxt(f, final_dictionary, fmt="%s")
-    
-    print(f"VAE Dictionary built: {len(final_dictionary)} tokens (Added {len(final_dictionary) - len(encoder_dict.symbols)} new tokens)")
-    
+
+    with open(save_path, "w") as f:
+        for token in final_dictionary:
+            f.write(token + "\n")
+
+    print("\n✅ Done!")
+    print(f"Total tokens: {len(final_dictionary)}")
+    print(f"New tokens added: {len(final_dictionary) - len(base_symbols)}")
+
     return Dictionary.from_list(final_dictionary)
 
 if __name__ == "__main__":
@@ -136,10 +232,15 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    args.lmdb_path = 'examples/pretrain/tdc_ames.lmdb'
-    args.encoder_dict_path = 'examples/pretrain/tdc_ames_dict.txt'
-    args.save_path = 'examples/pretrain/vae_dict.txt'
+    args.lmdb_path = '/internfs/zsj/ligands/train.lmdb'
+    args.encoder_dict_path = '/internfs/zsj/ligands/dictionary.txt'
+    args.save_path = '/internfs/zsj/ligands/vae_dict.txt'
     args.num_workers = 16
+    # args.lmdb_path = 'examples/pretrain/tdc_ames.lmdb'
+    # args.encoder_dict_path = 'examples/pretrain/tdc_ames_dict.txt'
+    # args.save_path = 'examples/pretrain/vae_dict.txt'
+    # args.num_workers = 16
+
 
     # Load encoder dictionary
     encoder_dict = Dictionary.load(args.encoder_dict_path)

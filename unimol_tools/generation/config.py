@@ -1,11 +1,17 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
+from hydra.core.config_store import ConfigStore
+
 @dataclass
-class GenerationConfig:
-    data_path: str = field(
+class DatasetConfig:
+    train_path: str = field(
         default="",
         metadata={"help": "Path to the training dataset."},
+    )
+    valid_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to the validation dataset (optional)."},
     )
     dict_path: Optional[str] = field(
         default=None,
@@ -15,21 +21,12 @@ class GenerationConfig:
         default=None,
         metadata={"help": "Optional path to the VAE dictionary file."},
     )
-    batch_size: int = field(
-        default=32,
-        metadata={"help": "Batch size for training."},
-    )
-    max_epochs: int = field(
-        default=10,
-        metadata={"help": "Maximum number of training epochs."},
-    )
-    lr: float = field(
-        default=1e-4,
-        metadata={"help": "Learning rate."},
-    )
-    beta: float = field(
-        default=0.001,
-        metadata={"help": "Weight for KL divergence loss (beta-VAE)."},
+
+@dataclass
+class ModelConfig:
+    unimol_weight_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to pretrained UniMol weights (optional)."},
     )
     latent_dim: int = field(
         default=256,
@@ -79,18 +76,6 @@ class GenerationConfig:
         default=256,
         metadata={"help": "Maximum sequence length."},
     )
-    seed: int = field(
-        default=42,
-        metadata={"help": "Random seed."},
-    )
-    output_dir: str = field(
-        default="checkpoints_generation",
-        metadata={"help": "Directory to save checkpoints."},
-    )
-    fp16: bool = field(
-        default=True,
-        metadata={"help": "Use mixed precision training."},
-    )
     # Fields required by UniMolModel (pretrain)
     masked_token_loss: float = field(default=0.0, metadata={"help": "Masked token loss weight."})
     masked_coord_loss: float = field(default=0.0, metadata={"help": "Masked coord loss weight."})
@@ -99,5 +84,47 @@ class GenerationConfig:
     attention_dropout: float = field(default=0.1, metadata={"help": "Attention dropout."})
     activation_dropout: float = field(default=0.0, metadata={"help": "Activation dropout."})
     delta_pair_repr_norm_loss: float = field(default=-1.0, metadata={"help": "Delta pair repr norm loss."})
+
+
+@dataclass
+class TrainingConfig:
+    batch_size: int = field(
+        default=32,
+        metadata={"help": "Batch size for training."},
+    )
+    max_epochs: int = field(
+        default=10,
+        metadata={"help": "Maximum number of training epochs."},
+    )
+    lr: float = field(
+        default=1e-4,
+        metadata={"help": "Learning rate."},
+    )
+    beta: float = field(
+        default=0.001,
+        metadata={"help": "Weight for KL divergence loss (beta-VAE)."},
+    )
+    seed: int = field(
+        default=42,
+        metadata={"help": "Random seed."},
+    )
+    output_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Directory to save checkpoints."},
+    )
+    fp16: bool = field(
+        default=True,
+        metadata={"help": "Use mixed precision training."},
+    )
     warmup_steps: int = field(default=10000, metadata={"help": "Warmup steps."}) # Increased warmup
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay."})
+
+
+@dataclass
+class GenerationConfig:
+    dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
+
+cs = ConfigStore.instance()
+cs.store(name="generation_config", node=GenerationConfig)

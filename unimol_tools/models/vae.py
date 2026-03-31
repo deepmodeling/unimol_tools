@@ -32,32 +32,44 @@ class UniMolVAE(nn.Module):
         self.vocab_size = len(dictionary)
         self.target_vocab_size = len(self.vae_dict)
         
-        self.check_config(config)
+        self.check_config(config.model)
 
         # Encoder: use UniMolModel (pre-trained architecture)
-        self.unimol_encoder = UniMolModel(config, dictionary)
+        # Note: UniMolModel expects the model config which holds model hyperparameters
+        self.unimol_encoder = UniMolModel(config.model, dictionary)
         
         # Variational parameters
-        self.fc_mu = nn.Linear(config.encoder_embed_dim, config.latent_dim)
-        self.fc_var = nn.Linear(config.encoder_embed_dim, config.latent_dim)
+        self.fc_mu = nn.Linear(config.model.encoder_embed_dim, config.model.latent_dim)
+        self.fc_var = nn.Linear(config.model.encoder_embed_dim, config.model.latent_dim)
         
         # Decoder Input Projection (Latent Z -> Decoder Memory)
-        self.decoder_input_proj = nn.Linear(config.latent_dim, config.decoder_embed_dim)
+        self.decoder_input_proj = nn.Linear(config.model.latent_dim, config.model.decoder_embed_dim)
         
         # Decoder Embedding (SMILES tokens)
-        self.decoder_embed_tokens = nn.Embedding(self.target_vocab_size, config.decoder_embed_dim, padding_idx=self.target_padding_idx)
-        self.pos_encoder = PositionalEncoding(config.decoder_embed_dim, config.dropout)
+        self.decoder_embed_tokens = nn.Embedding(self.target_vocab_size, config.model.decoder_embed_dim, padding_idx=self.target_padding_idx)
+        self.pos_encoder = PositionalEncoding(config.model.decoder_embed_dim, config.model.dropout)
         
         decoder_layers = TransformerDecoderLayer(
-            d_model=config.decoder_embed_dim, 
-            nhead=config.decoder_attention_heads, 
-            dim_feedforward=config.decoder_ffn_embed_dim, 
-            dropout=config.dropout, 
-            activation=config.activation_fn
+            d_model=config.model.decoder_embed_dim, 
+            nhead=config.model.decoder_attention_heads, 
+            dim_feedforward=config.model.decoder_ffn_embed_dim, 
+            dropout=config.model.dropout, 
+            activation=config.model.activation_fn
         )
-        self.decoder = TransformerDecoder(decoder_layers, config.decoder_layers)
+        self.decoder = TransformerDecoder(decoder_layers, config.model.decoder_layers)
         
-        self.fc_out = nn.Linear(config.decoder_embed_dim, self.target_vocab_size)
+        self.fc_out = nn.Linear(config.model.decoder_embed_dim, self.target_vocab_size)
+
+    def load_unimol_weights(self, path):
+        if path is not None:
+            import os
+            if os.path.exists(path):
+                state_dict = torch.load(path, map_location='cpu')
+                if 'model' in state_dict:
+                    state_dict = state_dict['model']
+                elif 'model_state_dict' in state_dict:
+                    state_dict = state_dict['model_state_dict']
+                self.unimol_encoder.load_state_dict(state_dict, strict=False)
 
     def check_config(self, config):
         required = ['encoder_embed_dim', 'decoder_embed_dim', 'latent_dim', 
@@ -106,7 +118,7 @@ class UniMolVAE(nn.Module):
         z_curr = self.decoder_input_proj(z).unsqueeze(0) # [1, batch, dim]
         
         # Decoder Input: decoder_input_tokens (SMILES tokens)
-        tgt_emb = self.decoder_embed_tokens(decoder_input_tokens) * math.sqrt(self.config.decoder_embed_dim)
+        tgt_emb = self.decoder_embed_tokens(decoder_input_tokens) * math.sqrt(self.config.model.decoder_embed_dim)
         tgt_emb = tgt_emb.transpose(0, 1) # [seq_len, batch, dim]
         tgt_emb = self.pos_encoder(tgt_emb)
         

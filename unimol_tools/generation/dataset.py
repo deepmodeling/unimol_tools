@@ -69,7 +69,7 @@ class VAEDataset(Dataset):
         self.add_bos = add_bos
         self.add_eos = add_eos
         self.randomize = randomize
-        self.tokenizer = SmilesTokenizer(self.vae_dict, max_len=max_len)
+        self.tokenizer = SmilesTokenizer(self.vae_dict, encoder_dict=self.dictionary, max_len=max_len)
 
     def __len__(self):
         return len(self.lmdb_dataset)
@@ -81,7 +81,7 @@ class VAEDataset(Dataset):
             
         atoms = item['atoms']
         coordinates = item['coordinates']
-        smiles = item['smiles']
+        smiles = item['smi']
 
         # --- Encoder Input Preparation (UniMol Format) ---
         src_tokens = [self.dictionary.index(a) for a in atoms]
@@ -89,7 +89,7 @@ class VAEDataset(Dataset):
         src_tokens = torch.tensor(src_tokens, dtype=torch.long)
         
         # Coordinates
-        coordinates = torch.from_numpy(coordinates).float()
+        coordinates = torch.from_numpy(np.array(coordinates[0])).float()
             
         # Distance Matrix
         dist = distance_matrix(coordinates.numpy(), coordinates.numpy()).astype(np.float32)
