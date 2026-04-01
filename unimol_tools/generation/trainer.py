@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -37,12 +38,12 @@ class GenerationTrainer:
                 try:
                     run_dir = os.path.join(get_original_cwd(), run_dir)
                 except ValueError:
-                    pass
+                    run_dir = os.path.join(os.getcwd(), run_dir)
         else:
             try:
                 run_dir = HydraConfig.get().run.dir
             except ValueError:
-                run_dir = "./outputs"
+                run_dir = "./generation_runs/default_run"
         self.run_dir = run_dir
         self.ckpt_dir = os.path.join(self.run_dir, 'checkpoints')
 
@@ -52,7 +53,7 @@ class GenerationTrainer:
                 dist.init_process_group(backend='nccl')
             self.rank = dist.get_rank()
             self.model = self.model.to(self.local_rank)
-            self.model = DDP(self.model, device_ids=[self.local_rank])
+            self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
             self.device = torch.device(f"cuda:{self.local_rank}")
         else:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -167,7 +168,7 @@ class GenerationTrainer:
             
             logits, mean, logv = output["logits"], output["mean"], output["logv"]
             
-            loss, recon, kl = self.loss_fn(logits, loss_target, mean, logv)
+            loss, recon, kl = self.loss_fn(logits, loss_target, mean, logv, step=self.global_step)
             
             loss.backward()
             self.optimizer.step()
@@ -175,11 +176,17 @@ class GenerationTrainer:
             
             self.global_step += 1
             if self.rank == 0 and self.writer:
-                self.writer.add_scalar("Train/Loss", loss.item(), self.global_step)
-                self.writer.add_scalar("Train/Recon", recon.item(), self.global_step)
-                self.writer.add_scalar("Train/KL", kl.item(), self.global_step)
-                self.writer.add_scalar("Train/LR", self.optimizer.param_groups[0]["lr"], self.global_step)
-            
+                if self.global_step % getattr(self.config.training, "log_every_n_steps", 10) == 0:
+                    self.writer.add_scalar("Train/Loss", loss.item(), self.global_step)
+                    self.writer.add_scalar("Train/Recon", recon.item(), self.global_step)
+                    self.writer.add_scalar("Train/KL", kl.item(), self.global_step)
+                    self.writer.add_scalar("Train/LR", self.optimizer.param_groups[0]["lr"], self.global_step)
+                    
+            if self.global_step % getattr(self.config.training, "save_every_n_steps", 5000) == 0:
+                self.validate(epoch, step=self.global_step)
+                if self.rank == 0:
+                    self.save_checkpoint(epoch, step=self.global_step)
+                    
             total_loss += loss.item()
             if self.rank == 0 and isinstance(pbar, tqdm):
                 pbar.set_postfix({"loss": loss.item(), "recon": recon.item(), "kl": kl.item()})
@@ -196,7 +203,7 @@ class GenerationTrainer:
                 self.writer.add_scalar("Epoch/Train_Loss", avg_loss, epoch)
         return avg_loss
 
-    def validate(self, epoch):
+    def validate(self, epoch, step=None):
         if not self.valid_dataset:
             return
         
@@ -235,9 +242,15 @@ class GenerationTrainer:
 
         avg_loss = total_loss / len(self.valid_loader)
         if self.rank == 0:
-            logger.info(f"Epoch {epoch} Valid Loss: {avg_loss:.4f}")
-            if self.writer:
-                self.writer.add_scalar("Epoch/Valid_Loss", avg_loss, epoch)
+            if step is not None:
+                logger.info(f"Epoch {epoch} Step {step} Valid Loss: {avg_loss:.4f}")
+                if self.writer:
+                    self.writer.add_scalar("Step/Valid_Loss", avg_loss, step)
+            else:
+                logger.info(f"Epoch {epoch} Valid Loss: {avg_loss:.4f}")
+                if self.writer:
+                    self.writer.add_scalar("Epoch/Valid_Loss", avg_loss, epoch)
+        self.model.train()
         return avg_loss
 
     def train_loop(self):
@@ -245,9 +258,10 @@ class GenerationTrainer:
             logger.info(f"Starting training loop for {self.config.training.max_epochs} epochs.")
         for epoch in range(self.config.training.max_epochs):
             self.train_epoch(epoch)
-            self.validate(epoch)
-            if self.rank == 0:
-                self.save_checkpoint(epoch)
+            
+        if self.rank == 0:
+            self.save_checkpoint(self.config.training.max_epochs - 1, step=self.global_step, name='checkpoint_last.pt')
+            
         if self.writer:
             self.writer.close()
 
@@ -258,17 +272,22 @@ class GenerationTrainer:
         ckpt_dir = Path(self.ckpt_dir)
         if not ckpt_dir.exists():
             return
-        ckpt_files = sorted(ckpt_dir.glob("checkpoint_epoch_*.pt"), key=os.path.getmtime)
-        keep = getattr(self.config, 'keep_last_n_checkpoints', keep)
+        ckpt_files = sorted(ckpt_dir.glob("checkpoint_*_*.pt"), key=os.path.getmtime)
+        keep = getattr(self.config.training, 'keep_last_n_checkpoints', keep)
         for f in ckpt_files[:-keep]:
             f.unlink()
 
-    def save_checkpoint(self, epoch):
+    def save_checkpoint(self, epoch, step=None, name=None):
         if self.rank != 0:
             return
         if not os.path.exists(self.ckpt_dir):
             os.makedirs(self.ckpt_dir, exist_ok=True)
-        path = os.path.join(self.ckpt_dir, f"checkpoint_epoch_{epoch}.pt")
+        if name is not None:
+            path = os.path.join(self.ckpt_dir, name)
+        elif step is not None:
+            path = os.path.join(self.ckpt_dir, f"checkpoint_{epoch+1}_{step}.pt")
+        else:
+            path = os.path.join(self.ckpt_dir, f"checkpoint_epoch_{epoch}.pt")
         
         # Save only decoder and VAE heads
         # Filter state dict: exclude 'unimol_encoder'
@@ -278,9 +297,11 @@ class GenerationTrainer:
         
         torch.save({
             'epoch': epoch,
+            'step': step,
             'model_state_dict': filtered_state,
             'optimizer_state_dict': self.optimizer.state_dict(),
             'config': self.config,
         }, path)
         logger.info(f"Saved checkpoint (decoder only) to {path}")
-        self._cleanup_old_checkpoints()
+        if name is None:
+            self._cleanup_old_checkpoints()

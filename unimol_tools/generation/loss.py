@@ -14,7 +14,7 @@ class VAELoss(nn.Module):
             reduction="mean"
         )
 
-    def forward(self, logits, targets, mean, logv, beta=None):
+    def forward(self, logits, targets, mean, logv, step=None):
         vocab_size = logits.size(-1)
 
         recon_loss = self.criterion(
@@ -28,12 +28,15 @@ class VAELoss(nn.Module):
         )
 
         # ⭐ free bits（防 collapse）
-        kl_loss = torch.clamp(kl_loss, min=0.5)
+        # kl_loss = torch.clamp(kl_loss, min=0.5)
 
         kl_loss = torch.mean(kl_loss)
 
-        if beta is None:
+        if step is None:
             beta = self.beta
+        else:
+            beta = self.beta * (step / 50000)  # 线性 warm-up
+            beta = min(beta, self.beta)
 
         total_loss = recon_loss + beta * kl_loss
 

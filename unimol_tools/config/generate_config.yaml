@@ -1,0 +1,11 @@
+# Default configuration for generation
+train_path: null
+valid_path: null
+dict_path: null
+vae_dict_path: null
+unimol_weight_path: null
+latent_slots: 16
+num_train_epochs: 50
+batch_size: 128
+learning_rate: 1e-4
+beta: 0.1

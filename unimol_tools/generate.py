@@ -5,7 +5,7 @@ from unimol_tools.generation.config import GenerationConfig, DatasetConfig, Mode
 from unimol_tools.generation.trainer import GenerationTrainer
 from unimol_tools.generation.dataset import VAEDataset
 from unimol_tools.generation.loss import VAELoss, get_token_weights
-from unimol_tools.models.vae import UniMolVAE
+from unimol_tools.models.unimolvae import UniMolVAE
 from unimol_tools.data.dictionary import Dictionary
 from unimol_tools.pretrain.preprocess import build_dictionary
 from unimol_tools.generation.data_utils import build_vae_dictionary

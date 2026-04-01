@@ -56,6 +56,10 @@ class ModelConfig:
         default=8,
         metadata={"help": "Number of decoder attention heads."},
     )
+    latent_slots: int = field(
+        default=8,
+        metadata={"help": "Number of latent slots."},
+    )
     encoder_ffn_embed_dim: int = field(
         default=2048,
         metadata={"help": "Encoder FFN embedding dimension."},
@@ -123,6 +127,19 @@ class TrainingConfig:
     )
     warmup_steps: int = field(default=10000, metadata={"help": "Warmup steps."}) # Increased warmup
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay."})
+    log_every_n_steps: int = field(
+        default=10,
+        metadata={"help": "Log training metrics every N update steps."},
+    )
+    save_every_n_steps: int = field(
+        default=5000,
+        metadata={"help": "Save a checkpoint every N update steps."},
+    )
+    keep_last_n_checkpoints: int = field(
+        default=5,
+        metadata={"help": "How many step checkpoints to keep."},
+    )
+
 
 
 @dataclass
