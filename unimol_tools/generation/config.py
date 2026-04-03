@@ -24,6 +24,10 @@ class DatasetConfig:
 
 @dataclass
 class ModelConfig:
+    model_name: str = field(
+        default="vae",
+        metadata={"help": "Model name, can be 'vae' or 'edm'."},
+    )
     unimol_weight_path: Optional[str] = field(
         default=None,
         metadata={"help": "Path to pretrained UniMol weights (optional)."},
@@ -39,6 +43,10 @@ class ModelConfig:
     decoder_layers: int = field(
         default=6,
         metadata={"help": "Number of decoder layers."},
+    )
+    egnn_layers: int = field(
+        default=6,
+        metadata={"help": "Number of EGNN layers (for EDM)."},
     )
     encoder_embed_dim: int = field(
         default=512,
@@ -79,6 +87,10 @@ class ModelConfig:
     max_seq_len: int = field(
         default=512,
         metadata={"help": "Maximum sequence length."},
+    )
+    remove_hs: bool = field(
+        default=False,
+        metadata={"help": "Whether to remove hydrogens when preparing data for EDM."},
     )
     # Fields required by UniMolModel (pretrain)
     masked_token_loss: float = field(default=0.0, metadata={"help": "Masked token loss weight."})

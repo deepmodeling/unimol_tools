@@ -89,7 +89,8 @@ class VAEDataset(Dataset):
         src_tokens = torch.tensor(src_tokens, dtype=torch.long)
         
         # Coordinates
-        coordinates = torch.from_numpy(np.array(coordinates[0])).float()
+        idx_coord = np.random.randint(len(coordinates))
+        coordinates = torch.from_numpy(np.array(coordinates[idx_coord])).float()
             
         # Distance Matrix
         dist = distance_matrix(coordinates.numpy(), coordinates.numpy()).astype(np.float32)
@@ -152,3 +153,100 @@ class VAEDataset(Dataset):
             },
             "target": padded_targets,
         }
+
+class EDMDataset(Dataset):
+    def __init__(self, data_path, dictionary, max_len=256, remove_hs=False):
+        self.lmdb_dataset = LMDBDataset(data_path)
+        self.dictionary = dictionary
+        self.max_len = max_len
+        self.remove_hs = remove_hs
+
+    def __len__(self):
+        return len(self.lmdb_dataset)
+
+    def __getitem__(self, idx):
+        item = self.lmdb_dataset[idx]
+        if item is None:
+            return None
+
+        # --- Input Preparation (UniMol Format) ---   
+        atoms = item['atoms']
+        raw_coordinates = item['coordinates']
+        idx_coord = np.random.randint(len(raw_coordinates))
+        coordinates = torch.from_numpy(np.array(raw_coordinates[idx_coord])).float()
+
+        atoms, coordinates = inner_coords(atoms, coordinates, remove_hs=self.remove_hs)
+
+        atoms = atoms[:self.max_len - 2]  # Reserve space for BOS and EOS
+        coordinates = coordinates[:self.max_len - 2]  # Reserve space for BOS and EOS
+
+        # Atoms
+        src_tokens = [self.dictionary.index(a) for a in atoms]
+        src_tokens = torch.tensor(src_tokens, dtype=torch.long)
+        src_tokens = torch.cat([
+            torch.tensor([self.dictionary.bos()]), 
+            src_tokens, 
+            torch.tensor([self.dictionary.eos()])
+        ])
+        
+        # Coordinates
+        pad = torch.zeros((1, 3), dtype=torch.float32)
+        coordinates = torch.tensor(coordinates, dtype=torch.float32)
+        coordinates = torch.cat([pad, coordinates, pad], dim=0)  # Add
+            
+        # Distance Matrix
+        diff = coordinates.unsqueeze(0) - coordinates.unsqueeze(1)
+        src_distance = torch.norm(diff, dim=-1)
+
+        # Edge Type
+        src_edge_type = src_tokens.view(-1, 1) * len(self.dictionary) + src_tokens.view(1, -1)
+        src_edge_type = src_edge_type.long()
+
+        return {
+            "net_input": {
+                "src_tokens": src_tokens,
+                "src_coord": coordinates, 
+                "src_distance": src_distance,
+                "src_edge_type": src_edge_type,
+            }
+        }
+
+    def collater(self, samples):
+        samples = [s for s in samples if s is not None]
+        if len(samples) == 0:
+            return {}
+
+        src_tokens = [s["net_input"]["src_tokens"] for s in samples]
+        src_coord = [s["net_input"]["src_coord"] for s in samples]
+        src_distance = [s["net_input"]["src_distance"] for s in samples]
+        src_edge_type = [s["net_input"]["src_edge_type"] for s in samples]
+        
+        pad_idx = self.dictionary.pad()
+        
+        padded_src_tokens = pad_1d_tokens(src_tokens, pad_idx)
+        padded_src_coord = pad_coords(src_coord, 0.0, dim=3) 
+        padded_src_distance = pad_2d(src_distance, 0.0) 
+        padded_src_edge_type = pad_2d(src_edge_type, 0) 
+
+        return {
+            "net_input": {
+                "src_tokens": padded_src_tokens,
+                "src_coord": padded_src_coord,
+                "src_distance": padded_src_distance,
+                "src_edge_type": padded_src_edge_type,
+            }
+        }
+
+def inner_coords(atoms, coordinates, remove_hs=True):
+    assert len(atoms) == len(coordinates), "coordinates shape is not align atoms"
+    coordinates = np.array(coordinates).astype(np.float32)
+    if remove_hs:
+        idx = [i for i, atom in enumerate(atoms) if atom != 'H']
+        atoms_no_h = [atom for atom in atoms if atom != 'H']
+        coordinates_no_h = coordinates[idx]
+        assert len(atoms_no_h) == len(
+            coordinates_no_h
+        ), "coordinates shape is not align with atoms"
+        return atoms_no_h, coordinates_no_h
+    else:
+        return atoms, coordinates

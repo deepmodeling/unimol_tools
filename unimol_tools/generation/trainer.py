@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -27,7 +28,9 @@ class GenerationTrainer:
         self.valid_dataset = valid_dataset
         self.loss_fn = loss_fn
         self.config = config
-        
+        self.model_name = config.model.model_name
+
+        self.set_seed(getattr(config.training, "seed", 42))
         # DDP configuration
         self.local_rank = int(os.environ.get("LOCAL_RANK", 0)) if local_rank is None else local_rank
         self.rank = int(os.environ.get("RANK", 0))
@@ -142,35 +145,46 @@ class GenerationTrainer:
             if not batch:
                 continue
             
-            # Encoder Inputs
-            net_input = batch["net_input"]
-            src_tokens = net_input["src_tokens"].to(self.device)
-            src_coord = net_input["src_coord"].to(self.device)
-            src_distance = net_input["src_distance"].to(self.device)
-            src_edge_type = net_input["src_edge_type"].to(self.device)
-            
-            # Decoder Inputs/Targets
-            target = batch["target"].to(self.device)
-            # Decoder input: [BOS, t1, t2] (remove EOS at end)
-            decoder_input = target[:, :-1]
-            # Loss target: [t1, t2, EOS] (remove BOS at start)
-            loss_target = target[:, 1:]
-            
             self.optimizer.zero_grad()
             
-            output = self.model(
-                src_tokens=src_tokens,
-                src_distance=src_distance,
-                src_coord=src_coord,
-                src_edge_type=src_edge_type,
-                decoder_input_tokens=decoder_input
-            )
-            
-            logits, mean, logv = output["logits"], output["mean"], output["logv"]
-            
-            loss, recon, kl = self.loss_fn(logits, loss_target, mean, logv, step=self.global_step)
+            if self.model_name == "vae":
+                # Encoder Inputs
+                net_input = batch["net_input"]
+                src_tokens = net_input["src_tokens"].to(self.device)
+                src_coord = net_input["src_coord"].to(self.device)
+                src_distance = net_input["src_distance"].to(self.device)
+                src_edge_type = net_input["src_edge_type"].to(self.device)
+                
+                # Decoder Inputs/Targets
+                target = batch["target"].to(self.device)
+                # Decoder input: [BOS, t1, t2] (remove EOS at end)
+                decoder_input = target[:, :-1]
+                # Loss target: [t1, t2, EOS] (remove BOS at start)
+                loss_target = target[:, 1:]
+                
+                output = self.model(
+                    src_tokens=src_tokens,
+                    src_distance=src_distance,
+                    src_coord=src_coord,
+                    src_edge_type=src_edge_type,
+                    decoder_input_tokens=decoder_input
+                )
+                
+                logits, mean, logv = output["logits"], output["mean"], output["logv"]
+                
+                loss, recon, kl = self.loss_fn(logits, loss_target, mean, logv, step=self.global_step)
+                
+            elif self.model_name == "edm":
+                # Move inputs to device
+                for k, v in batch["net_input"].items():
+                    batch["net_input"][k] = v.to(self.device)
+                
+                loss, loss_x, loss_z, loss_dist = self.loss_fn(self.model, batch)
+                recon = loss_x
+                kl = loss_z
             
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
             self.scheduler.step()
             
@@ -214,25 +228,31 @@ class GenerationTrainer:
                 if not batch:
                     continue
                 
-                net_input = batch["net_input"]
-                src_tokens = net_input["src_tokens"].to(self.device)
-                src_coord = net_input["src_coord"].to(self.device)
-                src_distance = net_input["src_distance"].to(self.device)
-                src_edge_type = net_input["src_edge_type"].to(self.device)
-                
-                target = batch["target"].to(self.device)
-                decoder_input = target[:, :-1]
-                loss_target = target[:, 1:]
-                
-                output = self.model(
-                    src_tokens=src_tokens,
-                    src_distance=src_distance,
-                    src_coord=src_coord,
-                    src_edge_type=src_edge_type,
-                    decoder_input_tokens=decoder_input
-                )
-                logits, mean, logv = output["logits"], output["mean"], output["logv"]
-                loss, _, _ = self.loss_fn(logits, loss_target, mean, logv)
+                if self.model_name == "vae":
+                    net_input = batch["net_input"]
+                    src_tokens = net_input["src_tokens"].to(self.device)
+                    src_coord = net_input["src_coord"].to(self.device)
+                    src_distance = net_input["src_distance"].to(self.device)
+                    src_edge_type = net_input["src_edge_type"].to(self.device)
+                    
+                    target = batch["target"].to(self.device)
+                    decoder_input = target[:, :-1]
+                    loss_target = target[:, 1:]
+                    
+                    output = self.model(
+                        src_tokens=src_tokens,
+                        src_distance=src_distance,
+                        src_coord=src_coord,
+                        src_edge_type=src_edge_type,
+                        decoder_input_tokens=decoder_input
+                    )
+                    logits, mean, logv = output["logits"], output["mean"], output["logv"]
+                    loss, _, _ = self.loss_fn(logits, loss_target, mean, logv)
+                elif self.model_name == "edm":
+                    for k, v in batch["net_input"].items():
+                        batch["net_input"][k] = v.to(self.device)
+                    loss, _, _, _ = self.loss_fn(self.model, batch)
+                    
                 total_loss += loss.item()
         
         if dist.is_initialized():
@@ -305,3 +325,13 @@ class GenerationTrainer:
         logger.info(f"Saved checkpoint (decoder only) to {path}")
         if name is None:
             self._cleanup_old_checkpoints()
+
+    def set_seed(self, seed):
+        """
+        Sets a random seed for torch and numpy to ensure reproducibility.
+        :param seed: (int) The seed number to be set.
+        """
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
