@@ -97,7 +97,11 @@ class MolGeneration:
             ) if self.config.dataset.valid_path else None
 
             model = model_cls(self.config, self.dictionary)
-            loss_fn = loss_cls(pad_idx=self.dictionary.pad(), lambda_z=1.0, lambda_dist=1.0)
+            loss_fn = loss_cls(
+                dictionary=self.dictionary,
+                lambda_z=1.0, 
+                lambda_dist=1.0
+                )
             
         if self.unimol_weight_path:
             print(f"Loading UniMol weights from {self.unimol_weight_path}...")

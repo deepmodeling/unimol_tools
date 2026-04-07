@@ -43,11 +43,11 @@ class UniMolVAE(nn.Module):
         self.fc_var = nn.Linear(config.model.encoder_embed_dim, config.model.latent_dim)
         
         # Decoder Input Projection (Latent Z -> Decoder Memory)
-        self.k = config.model.latent_slots  # 建议=8或16
+        # self.k = config.model.latent_slots  # 建议=8或16
 
         self.z_to_memory = nn.Linear(
             config.model.latent_dim,
-            self.k * config.model.decoder_embed_dim
+            config.model.decoder_embed_dim
         )
 
         # ⭐ embedding conditioning（强烈建议）
@@ -60,14 +60,18 @@ class UniMolVAE(nn.Module):
         self.decoder_embed_tokens = nn.Embedding(self.target_vocab_size, config.model.decoder_embed_dim, padding_idx=self.target_padding_idx)
         self.pos_encoder = PositionalEncoding(config.model.decoder_embed_dim, config.model.dropout)
         
-        decoder_layers = TransformerDecoderLayer(
-            d_model=config.model.decoder_embed_dim, 
-            nhead=config.model.decoder_attention_heads, 
-            dim_feedforward=config.model.decoder_ffn_embed_dim, 
-            dropout=config.model.dropout, 
-            activation=config.model.activation_fn
+        # decoder_layers = TransformerDecoderLayer(
+        #     d_model=config.model.decoder_embed_dim, 
+        #     nhead=config.model.decoder_attention_heads, 
+        #     dim_feedforward=config.model.decoder_ffn_embed_dim, 
+        #     dropout=config.model.dropout, 
+        #     activation=config.model.activation_fn
+        # )
+        # self.decoder = TransformerDecoder(decoder_layers, config.model.decoder_layers)
+        self.decoder = GRUDecoder(
+            latent_dim=config.model.decoder_embed_dim,
+            decoder_layers=config.model.decoder_layers
         )
-        self.decoder = TransformerDecoder(decoder_layers, config.model.decoder_layers)
         
         self.fc_out = nn.Linear(config.model.decoder_embed_dim, self.target_vocab_size)
 
@@ -95,7 +99,7 @@ class UniMolVAE(nn.Module):
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
+        eps = torch.randn_like(std) * 1e-2
         return mu + eps * std
 
     def generate_square_subsequent_mask(self, sz):
@@ -129,28 +133,31 @@ class UniMolVAE(nn.Module):
             
         B = z.size(0)
         D = self.config.model.decoder_embed_dim
-        k = self.k
+        # k = self.k
 
         z_mem = self.z_to_memory(z)             # [B, k*D]
-        z_mem = z_mem.view(B, k, D)             # [B, k, D]
-        z_mem = z_mem.transpose(0, 1)           # [k, B, D]
+        z_mem = z_mem.view(B, 1, D)             # [B, k, D]
+        # z_mem = z_mem.transpose(0, 1)           # [k, B, D]
+        z_mem = z_mem.repeat(1, decoder_input_tokens.size(-1), 1)  # [B, seq_len, D]
 
         # Decoder Input: decoder_input_tokens (SMILES tokens)
-        tgt_emb = self.decoder_embed_tokens(decoder_input_tokens) * math.sqrt(D)
-        z_embed = self.z_to_embed(z).unsqueeze(1)  # [B, 1, D]
-        tgt_emb = tgt_emb + z_embed
+        # tgt_emb = self.decoder_embed_tokens(decoder_input_tokens) * math.sqrt(D)
+        # z_embed = self.z_to_embed(z).unsqueeze(1)  # [B, 1, D]
+        # tgt_emb = tgt_emb + z_embed
 
-        tgt_emb = tgt_emb.transpose(0, 1) # [seq_len, batch, dim]
-        tgt_emb = self.pos_encoder(tgt_emb)
+        # tgt_emb = tgt_emb.transpose(0, 1) # [seq_len, batch, dim]
+        # tgt_emb = self.pos_encoder(tgt_emb)
         
-        decoder_input_tokens = random_mask(decoder_input_tokens, self.target_padding_idx, mask_prob=0.15)
-        tgt_key_padding_mask = (decoder_input_tokens == self.target_padding_idx)
+        # decoder_input_tokens = random_mask(decoder_input_tokens, self.target_padding_idx, mask_prob=0.15)
+        # tgt_key_padding_mask = (decoder_input_tokens == self.target_padding_idx)
         
-        sz = tgt_emb.size(0)
-        tgt_mask = self.generate_square_subsequent_mask(sz).to(tgt_emb.device)
+        # sz = tgt_emb.size(0)
+        # tgt_mask = self.generate_square_subsequent_mask(sz).to(tgt_emb.device)
         
-        output = self.decoder(tgt_emb, z_mem, tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask)
-        output = output.transpose(0, 1) # [batch, seq_len, dim]
+        # output = self.decoder(tgt_emb, z_mem, tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask)
+
+        output = self.decoder(z_mem)
+        # output = output.transpose(0, 1) # [batch, seq_len, dim]
         logits = self.fc_out(output)
         
         return {
@@ -165,3 +172,18 @@ def random_mask(tokens, pad_idx, mask_prob=0.1):
     tokens = tokens.clone()
     tokens[mask] = pad_idx
     return tokens
+
+class GRUDecoder(nn.Module):
+    def __init__(
+        self,
+        latent_dim: int = 512,
+        batch_first: bool = True,
+        decoder_layers: int = 6,
+        **kwargs
+    ) -> None:
+        super(GRUDecoder, self).__init__()
+        self.decoder = nn.GRU(latent_dim, latent_dim, decoder_layers, batch_first=batch_first)
+
+    def forward(self, x=None):
+        out, _ = self.decoder(x)
+        return out

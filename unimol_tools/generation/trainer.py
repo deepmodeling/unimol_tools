@@ -158,21 +158,21 @@ class GenerationTrainer:
                 # Decoder Inputs/Targets
                 target = batch["target"].to(self.device)
                 # Decoder input: [BOS, t1, t2] (remove EOS at end)
-                decoder_input = target[:, :-1]
+                # decoder_input = target[:, :-1]
                 # Loss target: [t1, t2, EOS] (remove BOS at start)
-                loss_target = target[:, 1:]
+                # loss_target = target[:, 1:]
                 
                 output = self.model(
                     src_tokens=src_tokens,
                     src_distance=src_distance,
                     src_coord=src_coord,
                     src_edge_type=src_edge_type,
-                    decoder_input_tokens=decoder_input
+                    decoder_input_tokens=target
                 )
                 
                 logits, mean, logv = output["logits"], output["mean"], output["logv"]
                 
-                loss, recon, kl = self.loss_fn(logits, loss_target, mean, logv, step=self.global_step)
+                loss, recon, kl = self.loss_fn(logits, target, mean, logv, step=self.global_step)
                 
             elif self.model_name == "edm":
                 # Move inputs to device

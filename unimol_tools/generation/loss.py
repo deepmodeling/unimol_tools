@@ -16,22 +16,23 @@ class VAELoss(nn.Module):
 
     def forward(self, logits, targets, mean, logv, step=None):
         vocab_size = logits.size(-1)
+        mask = (targets != self.pad_idx)
 
         recon_loss = self.criterion(
-            logits.view(-1, vocab_size),
-            targets.reshape(-1)
+            logits[mask].view(-1, vocab_size),
+            targets[mask].reshape(-1)
         )
+        recon_loss = recon_loss / mask.size(0)
 
         kl_loss = -0.5 * torch.sum(
             1 + logv - mean.pow(2) - logv.exp(),
-            dim=1
         )
+
+        kl_loss = kl_loss / mask.size(0)
 
         # ⭐ free bits（防 collapse）
         # kl_loss = torch.clamp(kl_loss, min=0.5)
-
-        kl_loss = torch.mean(kl_loss)
-
+        
         if step is None:
             beta = self.beta
         else:
@@ -129,12 +130,13 @@ def get_token_weights(encoder_dict, vae_dict):
 class EDMLoss(nn.Module):
     def __init__(
         self,
+        dictionary=None,
         sigma_min=0.002,
-        sigma_max=80,
+        sigma_max=20,
         rho=7,
         lambda_z=0.0,
         lambda_dist=0.0,
-        pad_idx=None
+
     ):
         super().__init__()
 
@@ -145,9 +147,12 @@ class EDMLoss(nn.Module):
         self.lambda_z = lambda_z
         self.lambda_dist = lambda_dist
 
-        self.pad_idx = pad_idx
+        self.dictionary = dictionary
+        self.pad_idx = self.dictionary.pad()
+        self.bos_idx = self.dictionary.bos()
+        self.eos_idx = self.dictionary.eos()
 
-        self.ce = nn.CrossEntropyLoss(ignore_index=pad_idx, reduction="mean")
+        self.ce = nn.CrossEntropyLoss(ignore_index=self.pad_idx, reduction="mean")
 
     # ===== sigma sampling（Karras EDM）=====
     def sample_sigma(self, B, device):
@@ -169,7 +174,7 @@ class EDMLoss(nn.Module):
         x0 = net_input["src_coord"]             # [B, N, 3]
         src_edge_type = net_input["src_edge_type"]
 
-        mask = (tokens != self.pad_idx)         # [B, N]
+        mask = (tokens != self.pad_idx) & (tokens != self.bos_idx) & (tokens != self.eos_idx)
 
         B = x0.size(0)
         device = x0.device
@@ -195,33 +200,43 @@ class EDMLoss(nn.Module):
         diff = x_sigma.unsqueeze(2) - x_sigma.unsqueeze(1)   # [B,N,N,3]
         src_distance_sigma = torch.norm(diff, dim=-1)        # [B,N,N]
 
+        scale_factor = torch.sqrt(1.0 + sigma**2).view(B, 1, 1)
+        src_distance_scaled = (src_distance_sigma / scale_factor).clamp(max=15.0)
+
         # ===== 6. forward =====
+        sigma_data = 0.5
+        # Karras 论文：无论加了多大的噪音，送进网络的尺度始终通过 c_in 归一化
+        c_in = 1.0 / torch.sqrt(sigma**2 + sigma_data**2)
+        x_in = x_sigma * c_in.view(B, 1, 1)
+
         dx, atom_logits = model(
             tokens,
-            src_distance_sigma,   # ✅ 用 noisy distance
-            x_sigma,
+            src_distance_scaled,
+            x_in,
             src_edge_type,
             sigma
         )
 
         # ===== 7. EDM reconstruction =====
-        c_skip = 1 / (sigma**2 + 1)
-        c_out  = sigma / torch.sqrt(sigma**2 + 1)
+        sigma_data = 0.5
+        c_skip = (sigma_data ** 2) / (sigma ** 2 + sigma_data ** 2)
+        c_out = (sigma * sigma_data) / torch.sqrt(sigma ** 2 + sigma_data ** 2)
 
-        pred_x0 = (
-            c_skip.view(B,1,1) * x_sigma
-            + c_out.view(B,1,1) * dx
-        )
+        pred_x0 = c_skip.view(B,1,1) * x_sigma + c_out.view(B,1,1) * dx
+
+        pred_x0_masked = pred_x0 * mask.unsqueeze(-1)
+        pred_x0_mean = pred_x0_masked.sum(dim=1, keepdim=True) / mask.sum(dim=1, keepdim=True).unsqueeze(-1).clamp(min=1)
+        pred_x0 = (pred_x0 - pred_x0_mean) * mask.unsqueeze(-1)
 
         # ===== 8. coordinate loss =====
-        loss_x = (((pred_x0 - x0) ** 2) * mask.unsqueeze(-1)).sum() / mask.sum().clamp(min=1)
+        weight = (sigma ** 2 + sigma_data ** 2) / ((sigma * sigma_data) ** 2)
+        loss_x = (weight.view(B,1,1) * ((pred_x0 - x0) ** 2) * mask.unsqueeze(-1)).sum() / mask.sum().clamp(min=1)
 
         # ===== 9. atom loss =====
         if self.lambda_z > 0:
-            loss_z = self.ce(
-                atom_logits.view(-1, atom_logits.size(-1)),
-                tokens.view(-1)
-            )
+            valid_logits = atom_logits[mask] # 变成 [Valid_Nodes, vocab_size]
+            valid_targets = tokens[mask]     # 变成 [Valid_Nodes]
+            loss_z = self.ce(valid_logits, valid_targets)
         else:
             loss_z = torch.tensor(0.0, device=device)
 

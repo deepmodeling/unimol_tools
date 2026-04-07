@@ -63,12 +63,20 @@ class E_GCL(nn.Module):
         # 3. Coordinate Update (Equivariant)
         # x_i = x_i + sum_j (x_i - x_j) * phi_x(m_ij)
         # weight: [B, N, N, 1]
-        w_ij = self.coord_mlp(m_ij) * 0.1
+        w_ij = self.coord_mlp(m_ij) 
+
         if mask is not None:
+            # 只有真实的 mask 点相互作用
+            combined_mask = mask.unsqueeze(2) * mask.unsqueeze(1) 
             w_ij = w_ij * combined_mask.unsqueeze(-1)
             
-        # 这里的 1/N 是为了稳定性，防止坐标爆炸
-        coord_diff = torch.sum(rel_x * w_ij, dim=2) / n_nodes 
+            # 【关键修改】：不能除以定长的 n_nodes（包含了大量pad）！要除以本分子的实际原子数
+            # clamp(min=1) 防止除零
+            real_nodes_count = mask.sum(dim=1, keepdim=True).unsqueeze(-1).clamp(min=1)
+            coord_diff = torch.sum(rel_x * w_ij, dim=2) / real_nodes_count
+        else:
+            coord_diff = torch.sum(rel_x * w_ij, dim=2) / n_nodes 
+            
         x = x + coord_diff
 
         # 4. Node Update (Invariant)
