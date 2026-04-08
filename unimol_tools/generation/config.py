@@ -21,6 +21,10 @@ class DatasetConfig:
         default=None,
         metadata={"help": "Optional path to the VAE dictionary file."},
     )
+    randomize_smiles: bool = field(
+        default=True,
+        metadata={"help": "Whether to randomize SMILES strings during training for data augmentation."},
+    )
 
 @dataclass
 class ModelConfig:
@@ -65,8 +69,8 @@ class ModelConfig:
         metadata={"help": "Number of decoder attention heads."},
     )
     latent_slots: int = field(
-        default=8,
-        metadata={"help": "Number of latent slots."},
+        default=0,
+        metadata={"help": "Number of latent slots. only used for VAE. If >0, will use slot attention mechanism to aggregate latent representations."},
     )
     encoder_ffn_embed_dim: int = field(
         default=2048,

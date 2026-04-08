@@ -76,8 +76,8 @@ class MolGeneration:
         loss_cls = MODEL_REGISTRY[self.model_name]["loss"]
 
         if self.model_name == "vae":
-            train_dataset = dataset_cls(self.config.dataset.train_path, self.dictionary, self.vae_dict)
-            valid_dataset = dataset_cls(self.config.dataset.valid_path, self.dictionary, self.vae_dict) if self.config.dataset.valid_path else None
+            train_dataset = dataset_cls(self.config.dataset.train_path, self.dictionary, self.vae_dict, max_len=self.config.model.max_seq_len, randomize=self.config.dataset.randomize_smiles)
+            valid_dataset = dataset_cls(self.config.dataset.valid_path, self.dictionary, self.vae_dict, max_len=self.config.model.max_seq_len, randomize=False) if self.config.dataset.valid_path else None
 
             model = model_cls(self.config, self.dictionary, self.vae_dict)
             loss_fn = loss_cls(beta=self.config.training.beta, pad_idx=self.vae_dict.pad(), token_weights=self.token_weights)

@@ -11,7 +11,7 @@ class VAELoss(nn.Module):
         self.criterion = nn.CrossEntropyLoss(
             weight=token_weights,
             ignore_index=pad_idx,
-            reduction="mean"
+            reduction="sum"
         )
 
     def forward(self, logits, targets, mean, logv, step=None):

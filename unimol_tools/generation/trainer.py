@@ -75,6 +75,17 @@ class GenerationTrainer:
                 param.requires_grad = False
             if self.rank == 0:
                 logger.info("Frozen UniMol Encoder parameters.")
+                
+        # Intercept model.train() to ensure encoder stays in eval mode
+        original_train = self.model.train
+        def custom_train(mode=True):
+            original_train(mode)
+            if mode:
+                rmodel = self.model.module if isinstance(self.model, DDP) else self.model
+                if hasattr(rmodel, "unimol_encoder"):
+                    rmodel.unimol_encoder.eval()
+            return self.model
+        self.model.train = custom_train
         
         # Optimizer (only train requires_grad params)
         model_params = [p for p in self.model.parameters() if p.requires_grad]
@@ -129,11 +140,6 @@ class GenerationTrainer:
         self.model.train()
         if self.sampler:
             self.sampler.set_epoch(epoch)
-            
-        # Ensure encoder stays in eval mode (for BatchNorm/Dropout behaviors if needed)
-        real_model = self.model.module if isinstance(self.model, DDP) else self.model
-        if hasattr(real_model, "unimol_encoder"):
-            real_model.unimol_encoder.eval()
 
         total_loss = 0
         if self.rank == 0:
@@ -157,22 +163,24 @@ class GenerationTrainer:
                 
                 # Decoder Inputs/Targets
                 target = batch["target"].to(self.device)
-                # Decoder input: [BOS, t1, t2] (remove EOS at end)
-                # decoder_input = target[:, :-1]
-                # Loss target: [t1, t2, EOS] (remove BOS at start)
-                # loss_target = target[:, 1:]
+                
+                # For auto-regressive generation, decoder input shouldn't see future tokens. 
+                # Input should be: [BOS, t1, t2, ..., t_N-1]
+                # Target should be: [t1, t2, ..., t_N-1, EOS]
+                decoder_input = target[:, :-1]
+                loss_target = target[:, 1:]
                 
                 output = self.model(
                     src_tokens=src_tokens,
                     src_distance=src_distance,
                     src_coord=src_coord,
                     src_edge_type=src_edge_type,
-                    decoder_input_tokens=target
+                    decoder_input_tokens=decoder_input
                 )
                 
                 logits, mean, logv = output["logits"], output["mean"], output["logv"]
                 
-                loss, recon, kl = self.loss_fn(logits, target, mean, logv, step=self.global_step)
+                loss, recon, kl = self.loss_fn(logits, loss_target, mean, logv, step=self.global_step)
                 
             elif self.model_name == "edm":
                 # Move inputs to device

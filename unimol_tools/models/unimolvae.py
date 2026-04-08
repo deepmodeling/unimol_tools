@@ -42,17 +42,17 @@ class UniMolVAE(nn.Module):
         self.fc_mu = nn.Linear(config.model.encoder_embed_dim, config.model.latent_dim)
         self.fc_var = nn.Linear(config.model.encoder_embed_dim, config.model.latent_dim)
         
-        # Decoder Input Projection (Latent Z -> Decoder Memory)
-        # self.k = config.model.latent_slots  # 建议=8或16
+        self.latent_slots = getattr(config.model, 'latent_slots', 0)
+        in_features = config.model.latent_dim * self.latent_slots if self.latent_slots > 0 else config.model.latent_dim
 
         self.z_to_memory = nn.Linear(
-            config.model.latent_dim,
+            in_features,
             config.model.decoder_embed_dim
         )
 
         # ⭐ embedding conditioning（强烈建议）
         self.z_to_embed = nn.Linear(
-            config.model.latent_dim,
+            in_features,
             config.model.decoder_embed_dim
         )
 
@@ -118,9 +118,13 @@ class UniMolVAE(nn.Module):
             src_edge_type
         )
         
-        # Take [CLS] token representation (index 0)
+        # Take [CLS] token & latent slots representation
         # encoder_rep: [batch, seq_len, dim] usually for UniMol
-        hidden = encoder_rep[:, 0, :] 
+        if self.latent_slots > 0:
+            # Take the first `latent_slots` tokens (e.g. [CLS] + first N-1 atoms)
+            hidden = encoder_rep[:, :self.latent_slots, :] 
+        else:
+            hidden = encoder_rep[:, 0, :] 
         
         mu = self.fc_mu(hidden)
         logvar = self.fc_var(hidden)
@@ -133,30 +137,22 @@ class UniMolVAE(nn.Module):
             
         B = z.size(0)
         D = self.config.model.decoder_embed_dim
-        # k = self.k
 
-        z_mem = self.z_to_memory(z)             # [B, k*D]
-        z_mem = z_mem.view(B, 1, D)             # [B, k, D]
-        # z_mem = z_mem.transpose(0, 1)           # [k, B, D]
-        z_mem = z_mem.repeat(1, decoder_input_tokens.size(-1), 1)  # [B, seq_len, D]
+        if self.latent_slots > 0:
+            z_flat = z.view(B, -1)   # [B, latent_slots * latent_dim]
+            z_mem = self.z_to_memory(z_flat)
+        else:
+            z_mem = self.z_to_memory(z)             # [B, D]
+            
+        z_mem = z_mem.unsqueeze(1).repeat(1, decoder_input_tokens.size(-1), 1)  # [B, seq_len, D]
 
-        # Decoder Input: decoder_input_tokens (SMILES tokens)
-        # tgt_emb = self.decoder_embed_tokens(decoder_input_tokens) * math.sqrt(D)
-        # z_embed = self.z_to_embed(z).unsqueeze(1)  # [B, 1, D]
-        # tgt_emb = tgt_emb + z_embed
-
-        # tgt_emb = tgt_emb.transpose(0, 1) # [seq_len, batch, dim]
+        tgt_emb = self.decoder_embed_tokens(decoder_input_tokens) * math.sqrt(D)
+        # Disable pos_encoder for GRU
         # tgt_emb = self.pos_encoder(tgt_emb)
         
-        # decoder_input_tokens = random_mask(decoder_input_tokens, self.target_padding_idx, mask_prob=0.15)
-        # tgt_key_padding_mask = (decoder_input_tokens == self.target_padding_idx)
+        dec_input = tgt_emb + z_mem
         
-        # sz = tgt_emb.size(0)
-        # tgt_mask = self.generate_square_subsequent_mask(sz).to(tgt_emb.device)
-        
-        # output = self.decoder(tgt_emb, z_mem, tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask)
-
-        output = self.decoder(z_mem)
+        output, _ = self.decoder(dec_input)
         # output = output.transpose(0, 1) # [batch, seq_len, dim]
         logits = self.fc_out(output)
         
@@ -184,6 +180,6 @@ class GRUDecoder(nn.Module):
         super(GRUDecoder, self).__init__()
         self.decoder = nn.GRU(latent_dim, latent_dim, decoder_layers, batch_first=batch_first)
 
-    def forward(self, x=None):
-        out, _ = self.decoder(x)
-        return out
+    def forward(self, x=None, h=None):
+        out, h = self.decoder(x, h)
+        return out, h

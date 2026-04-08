@@ -61,14 +61,13 @@ class LMDBDataset(Dataset):
         return item
 
 class VAEDataset(Dataset):
-    def __init__(self, data_path, dictionary, vae_dict, max_len=256, add_bos=True, add_eos=True, randomize=True):
+    def __init__(self, data_path, dictionary, vae_dict, max_len=256, randomize=True, remove_hs=False):
         self.lmdb_dataset = LMDBDataset(data_path)
         self.dictionary = dictionary
         self.vae_dict = vae_dict
         self.max_len = max_len
-        self.add_bos = add_bos
-        self.add_eos = add_eos
         self.randomize = randomize
+        self.remove_hs = remove_hs
         self.tokenizer = SmilesTokenizer(self.vae_dict, encoder_dict=self.dictionary, max_len=max_len)
 
     def __len__(self):
@@ -78,26 +77,38 @@ class VAEDataset(Dataset):
         item = self.lmdb_dataset[idx]
         if item is None:
             return None
-            
+        
+        # --- Input Preparation (UniMol Format) ---   
         atoms = item['atoms']
-        coordinates = item['coordinates']
+        raw_coordinates = item['coordinates']
         smiles = item['smi']
+        idx_coord = np.random.randint(len(raw_coordinates))
+        coordinates = torch.from_numpy(np.array(raw_coordinates[idx_coord])).float()
 
-        # --- Encoder Input Preparation (UniMol Format) ---
+        atoms, coordinates = inner_coords(atoms, coordinates, remove_hs=self.remove_hs)
+
+        atoms = atoms[:self.max_len - 2]  # Reserve space for BOS and EOS
+        coordinates = coordinates[:self.max_len - 2]  # Reserve space for BOS and EOS
+
+        # Atoms
         src_tokens = [self.dictionary.index(a) for a in atoms]
-
         src_tokens = torch.tensor(src_tokens, dtype=torch.long)
+        src_tokens = torch.cat([
+            torch.tensor([self.dictionary.bos()]), 
+            src_tokens, 
+            torch.tensor([self.dictionary.eos()])
+        ])
         
         # Coordinates
-        idx_coord = np.random.randint(len(coordinates))
-        coordinates = torch.from_numpy(np.array(coordinates[idx_coord])).float()
+        pad = torch.zeros((1, 3), dtype=torch.float32)
+        coordinates = torch.tensor(coordinates, dtype=torch.float32)
+        coordinates = torch.cat([pad, coordinates, pad], dim=0)  # Add
             
         # Distance Matrix
-        dist = distance_matrix(coordinates.numpy(), coordinates.numpy()).astype(np.float32)
-        src_distance = torch.from_numpy(dist)
-        
+        diff = coordinates.unsqueeze(0) - coordinates.unsqueeze(1)
+        src_distance = torch.norm(diff, dim=-1)
+
         # Edge Type
-        # src_edge_type = atom_i * vocab_size + atom_j
         src_edge_type = src_tokens.view(-1, 1) * len(self.dictionary) + src_tokens.view(1, -1)
         src_edge_type = src_edge_type.long()
 
@@ -106,11 +117,12 @@ class VAEDataset(Dataset):
             smiles = randomize_smiles(smiles)
 
         tgt_tokens = torch.tensor(self.tokenizer.encode(smiles))
-        
-        if self.add_bos:
-            tgt_tokens = torch.cat([torch.tensor([self.vae_dict.bos()]), tgt_tokens])
-        if self.add_eos:
-            tgt_tokens = torch.cat([tgt_tokens, torch.tensor([self.vae_dict.eos()])])
+        tgt_tokens = tgt_tokens[:self.max_len - 2]  # Reserve space for BOS and EOS
+        tgt_tokens = torch.cat([
+            torch.tensor([self.vae_dict.bos()]),
+            tgt_tokens,
+            torch.tensor([self.vae_dict.eos()])
+        ])
 
         return {
             "net_input": {
