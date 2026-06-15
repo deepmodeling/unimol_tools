@@ -1,0 +1,17 @@
+{
+  "auto_map": {
+    "AutoTokenizer": [
+      "unimol_hf.tokenization_unimol.UnimolTokenizer",
+      null
+    ]
+  },
+  "cls_token": "[CLS]",
+  "conformer_mode": "fast",
+  "conformer_seed": 42,
+  "model_max_length": 512,
+  "pad_token": "[PAD]",
+  "remove_hs": true,
+  "sep_token": "[SEP]",
+  "tokenizer_class": "UnimolTokenizer",
+  "unk_token": "[UNK]"
+}

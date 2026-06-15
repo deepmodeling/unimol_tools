@@ -37,9 +37,16 @@ setup(
         "omegaconf",
         "tensorboard",
         "lmdb",
+        "transformers",
     ],
     python_requires=">=3.9",
     include_package_data=True,
+    package_data={
+        "unimol_hf": [
+            "pretrained/unimol-v1-allh/*",
+            "pretrained/unimol-v1-noh/*",
+        ],
+    },
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Science/Research",

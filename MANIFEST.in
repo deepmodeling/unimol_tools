@@ -1,2 +1,3 @@
 include unimol_tools/config/*
 include unimol_tools/weights/*
+recursive-include unimol_hf/pretrained *

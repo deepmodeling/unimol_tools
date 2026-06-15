@@ -74,6 +74,7 @@ export UNIMOL_WEIGHT_DIR=/path/to/your/weights/dir/
 ```
 
 ## News
+- 2026-06-15: Added `unimol_hf`, a Hugging Face Transformers-compatible interface with `AutoTokenizer`, `AutoModel`, `AutoModelForMaskedLM`, `AutoModelForSequenceClassification`, `Trainer` examples, and allH/noH pretrained entries.
 - 2025-09-22: Lightweight pre-training tools are now available in Unimol_tools!
 - 2025-05-26: Unimol_tools is now independent from the Uni-Mol repository!
 - 2025-03-28: Unimol_tools now support Distributed Data Parallel (DDP)!
@@ -144,6 +145,160 @@ unimol_repr = clf.get_repr(smiles_list, return_atomic_reprs=True)
 print(np.array(unimol_repr['cls_repr']).shape)
 # atomic level repr, align with rdkit mol.GetAtoms()
 print(np.array(unimol_repr['atomic_reprs']).shape)
+```
+
+### Transformers interface (`unimol_hf`)
+
+`unimol_hf` provides a Hugging Face Transformers-compatible
+interface. Importing the module registers Uni-Mol with `AutoTokenizer`,
+`AutoModel`, `AutoModelForMaskedLM`, and `AutoModelForSequenceClassification`.
+
+Uni-Mol tokenization is SMILES-based and generates 3D molecular inputs
+(`input_ids`, `dist_mat`, `edge_ids`, `coords`), so use
+`UnimolDataCollator` when training with `Trainer`.
+
+Two molecule checkpoints are provided, matching the original Uni-Mol Tools
+weights:
+
+```python
+from importlib.resources import files
+
+all_h_pretrained = files("unimol_hf").joinpath("pretrained/unimol-v1-allh")
+no_h_pretrained = files("unimol_hf").joinpath("pretrained/unimol-v1-noh")
+```
+
+Use `unimol-v1-allh` to keep hydrogens (`remove_hs=False`) and
+`unimol-v1-noh` to remove hydrogens (`remove_hs=True`). In the examples below,
+`single_label_classification` is the Hugging Face `problem_type` used to select
+`CrossEntropyLoss`; it corresponds to the original Uni-Mol Tools task
+`classification`.
+
+#### Classification with `Trainer`
+
+```python
+from importlib.resources import files
+
+import pandas as pd
+import unimol_hf  # register Uni-Mol Auto classes
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
+from unimol_hf import UnimolConfig, UnimolDataCollator, UnimolSmilesDataset
+
+pretrained = files("unimol_hf").joinpath("pretrained/unimol-v1-allh")
+train_data = pd.read_csv("train.csv")  # columns: SMILES, TARGET
+
+tokenizer = AutoTokenizer.from_pretrained(str(pretrained))
+config = UnimolConfig.from_pretrained(
+    str(pretrained),
+    num_labels=2,
+    problem_type="single_label_classification",
+)
+model = AutoModelForSequenceClassification.from_pretrained(str(pretrained), config=config)
+
+train_dataset = UnimolSmilesDataset(
+    train_data,
+    tokenizer,
+    smiles_col="SMILES",
+    target_col="TARGET",
+    problem_type="single_label_classification",
+)
+collator = UnimolDataCollator(
+    pad_token_id=tokenizer.pad_token_id,
+    problem_type="single_label_classification",
+)
+args = TrainingArguments(
+    output_dir="./hf_cls_exp",
+    per_device_train_batch_size=16,
+    num_train_epochs=10,
+    learning_rate=1e-4,
+    remove_unused_columns=False,
+    report_to=[],
+)
+
+trainer = Trainer(
+    model=model,
+    args=args,
+    train_dataset=train_dataset,
+    data_collator=collator,
+)
+trainer.train()
+model.save_pretrained("./hf_cls_exp")
+tokenizer.save_pretrained("./hf_cls_exp")
+```
+
+#### Regression with `Trainer`
+
+```python
+from importlib.resources import files
+
+import pandas as pd
+import unimol_hf
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments
+from unimol_hf import UnimolConfig, UnimolDataCollator, UnimolSmilesDataset
+
+pretrained = files("unimol_hf").joinpath("pretrained/unimol-v1-allh")
+train_data = pd.read_csv("train.csv")  # columns: SMILES, TARGET
+
+tokenizer = AutoTokenizer.from_pretrained(str(pretrained))
+config = UnimolConfig.from_pretrained(
+    str(pretrained),
+    num_labels=1,
+    problem_type="regression",
+)
+model = AutoModelForSequenceClassification.from_pretrained(str(pretrained), config=config)
+
+train_dataset = UnimolSmilesDataset(
+    train_data,
+    tokenizer,
+    smiles_col="SMILES",
+    target_col="TARGET",
+    problem_type="regression",
+)
+collator = UnimolDataCollator(
+    pad_token_id=tokenizer.pad_token_id,
+    problem_type="regression",
+)
+args = TrainingArguments(
+    output_dir="./hf_reg_exp",
+    per_device_train_batch_size=16,
+    num_train_epochs=10,
+    learning_rate=1e-4,
+    remove_unused_columns=False,
+    report_to=[],
+)
+
+trainer = Trainer(
+    model=model,
+    args=args,
+    train_dataset=train_dataset,
+    data_collator=collator,
+)
+trainer.train()
+model.save_pretrained("./hf_reg_exp")
+tokenizer.save_pretrained("./hf_reg_exp")
+```
+
+#### Get molecular representations
+
+```python
+from importlib.resources import files
+
+import torch
+import unimol_hf
+from transformers import AutoModel, AutoTokenizer
+from unimol_hf import UnimolDataCollator
+
+pretrained = files("unimol_hf").joinpath("pretrained/unimol-v1-allh")
+smiles = ["CCO", "c1ccccc1"]
+
+tokenizer = AutoTokenizer.from_pretrained(str(pretrained))
+model = AutoModel.from_pretrained(str(pretrained)).eval()
+collator = UnimolDataCollator(pad_token_id=tokenizer.pad_token_id)
+batch = collator([tokenizer.encode(smi) for smi in smiles])
+
+with torch.no_grad():
+    cls_repr = model.get_cls_repr(**batch)
+
+print(cls_repr.shape)  # torch.Size([2, 512])
 ```
 
 ### Command-line utilities
