@@ -1,0 +1,46 @@
+{
+  "activation_fn": "gelu",
+  "architectures": [
+    "UnimolForMaskedLM"
+  ],
+  "attention_dropout_prob": 0.1,
+  "auto_map": {
+    "AutoConfig": "unimol_hf.configuration_unimol.UnimolConfig",
+    "AutoTokenizer": [
+      "unimol_hf.tokenization_unimol.UnimolTokenizer",
+      null
+    ],
+    "AutoModel": "unimol_hf.modeling_unimol.UnimolModel",
+    "AutoModelForMaskedLM": "unimol_hf.modeling_unimol.UnimolForMaskedLM",
+    "AutoModelForSequenceClassification": "unimol_hf.modeling_unimol.UnimolForSequenceClassification"
+  },
+  "bos_token_id": 0,
+  "conformer_mode": "fast",
+  "conformer_seed": 42,
+  "data_type": "molecule",
+  "dict_name": "mol.dict.txt",
+  "eos_token_id": 3,
+  "hidden_dropout_prob": 0.1,
+  "hidden_size": 512,
+  "id2label": {
+    "0": "LABEL_0"
+  },
+  "intermediate_size": 2048,
+  "label2id": {
+    "LABEL_0": 0
+  },
+  "max_position_embeddings": 512,
+  "model_type": "unimol",
+  "num_attention_heads": 64,
+  "num_hidden_layers": 15,
+  "pad_token_id": 2,
+  "pooler_activation_fn": "tanh",
+  "pooler_dropout": 0.2,
+  "pretrained_dict_path": "unimol_tools/unimol_tools/weights/mol.dict.txt",
+  "pretrained_model_path": "unimol_tools/unimol_tools/weights/mol_pre_all_h_220816.pt",
+  "remove_hs": false,
+  "transformers_version": "4.57.3",
+  "unk_token_id": 1,
+  "vocab_size": 31,
+  "weight_name": "mol_pre_all_h_220816.pt"
+}
