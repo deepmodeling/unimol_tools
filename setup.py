@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
     name="unimol_tools",
-    version="0.1.5",
+    version="0.1.6",
     description=(
         "unimol_tools is a Python package for property prediction with Uni-Mol in molecule, materials and protein."
     ),
