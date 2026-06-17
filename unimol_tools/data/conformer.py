@@ -30,6 +30,14 @@ from ..utils import logger
 from ..weights import get_weight_dir, weight_download
 from .dictionary import Dictionary
 
+
+def _imap_with_optional_timeout(pool, func, items, timeout=None):
+    iterator = pool.imap(func, items)
+    if timeout is None:
+        return [item for item in tqdm(iterator)]
+    return [iterator.next(timeout) for _ in tqdm(range(len(items)))]
+
+
 # https://github.com/snap-stanford/ogb/blob/master/ogb/utils/features.py
 # allowable multiple choice node and edge features
 allowable_features = {
@@ -94,6 +102,7 @@ class ConformerGen(object):
         self.method = params.get('method', 'rdkit_random')
         self.mode = params.get('mode', 'fast')
         self.remove_hs = params.get('remove_hs', False)
+        self.conformer_timeout = params.get('conformer_timeout', None)
         # allow using a custom token dictionary to avoid unnecessary downloads
         dict_path = params.get('pretrained_dict_path', None)
         if dict_path is not None:
@@ -185,9 +194,12 @@ class ConformerGen(object):
         logger.info('Start generating conformers...')
         if self.multi_process:
             with Pool(processes=min(8, os.cpu_count())) as pool:
-                results = [
-                    item for item in tqdm(pool.imap(self.single_process, smiles_list))
-                ]
+                results = _imap_with_optional_timeout(
+                    pool,
+                    self.single_process,
+                    smiles_list,
+                    timeout=self.conformer_timeout,
+                )
         else:
             results = [self.single_process(smiles) for smiles in tqdm(smiles_list)]
 
@@ -409,6 +421,7 @@ class UniMolV2Feature(object):
         self.method = params.get('method', 'rdkit_random')
         self.mode = params.get('mode', 'fast')
         self.remove_hs = params.get('remove_hs', True)
+        self.conformer_timeout = params.get('conformer_timeout', None)
         if os.name == 'posix':
             self.multi_process = params.get('multi_process', True)
         else:
@@ -459,9 +472,12 @@ class UniMolV2Feature(object):
         logger.info('Start generating conformers...')
         if self.multi_process:
             with Pool(processes=min(8, os.cpu_count())) as pool:
-                results = [
-                    item for item in tqdm(pool.imap(self.single_process, smiles_list))
-                ]
+                results = _imap_with_optional_timeout(
+                    pool,
+                    self.single_process,
+                    smiles_list,
+                    timeout=self.conformer_timeout,
+                )
         else:
             results = [self.single_process(smiles) for smiles in tqdm(smiles_list)]
 

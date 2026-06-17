@@ -7,6 +7,8 @@ from utils_net import download_for_test
 
 from unimol_tools import MolTrain, MolPredict
 
+pytestmark = [pytest.mark.case, pytest.mark.integration, pytest.mark.slow]
+
 DATA_URL = 'https://weilab.math.msu.edu/DataLibrary/2D/Downloads/ESOL_smi.zip'
 
 

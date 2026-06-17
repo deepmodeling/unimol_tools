@@ -31,6 +31,17 @@ from unimol_tools.data.conformer import (
 )
 
 
+def delayed_single_process(smiles):
+    time.sleep(0.1)  # Simulate computation delay
+    return {"src_coord": np.zeros((5, 3))}, None
+
+
+def write_test_dictionary(tmp_path):
+    dict_path = tmp_path / "test.dict.txt"
+    dict_path.write_text("C 10\nH 10\nO 10\nN 10\n", encoding="utf-8")
+    return str(dict_path)
+
+
 def test_missing_pool_join_race_condition():
     """
     Demonstrate the race condition caused by missing pool.join().
@@ -41,19 +52,17 @@ def test_missing_pool_join_race_condition():
     
     Location: unimol_tools/data/conformer.py, transform() methods (~lines 191, 466)
     """
-    # Simulate the problematic pattern
-    def delayed_single_process(smiles):
-        time.sleep(0.1)  # Simulate computation delay
-        return {"src_coord": np.zeros((5, 3))}, None
-
     smiles_list = ["CC", "CCO", "CCN", "CCC"]
 
     # Demonstrate the pattern WITHOUT pool.join() (the problematic way)
     pool = Pool(processes=2)
-    results = list(pool.imap(delayed_single_process, smiles_list))
-    pool.close()
-    # NOTE: Missing pool.join() here - this is the bug!
-    # The pool should be properly cleaned up with pool.join()
+    try:
+        results = list(pool.imap(delayed_single_process, smiles_list))
+    finally:
+        pool.close()
+        pool.join()
+    # The production bug this test documents was a missing pool.join(); this
+    # test still joins its own pool so the test suite does not leak processes.
     
     # Verify results are returned (may be incomplete due to race condition)
     # This test documents that results may be unreliable without pool.join()
@@ -103,25 +112,54 @@ def test_bare_except_keyboard_interrupt():
         pass
 
 
-def test_no_timeout_mechanism():
+def test_conformer_timeout_is_passed_to_pool_iterator():
     """
-    Demonstrate the lack of timeout mechanism for pool.imap().
-    
-    Issue: pool.imap() is called without a timeout, meaning if a worker
-    process hangs (e.g., on a difficult molecule), it will hang forever.
-    
-    Location: unimol_tools/data/conformer.py, transform() methods
-    
-    Expected Fix: Add timeout parameter to pool.imap() and handle timeouts.
+    Verify multiprocessing conformer generation can bound worker waits.
     """
-    # This test documents the missing timeout mechanism
-    # The current code does: pool.imap(self.single_process, smiles_list)
-    # It should be: pool.imap(self.single_process, smiles_list, timeout=300)
-    
-    # We can't easily test the actual timeout without making the code hang,
-    # so this test just documents the expected behavior
-    
-    pytest.skip("Timeout mechanism not implemented - this documents the issue")
+    from unimol_tools.data.conformer import _imap_with_optional_timeout
+
+    class FakeIterator:
+        def __init__(self):
+            self.timeouts = []
+            self.values = iter(["feat-a", "feat-b"])
+
+        def next(self, timeout=None):
+            self.timeouts.append(timeout)
+            return next(self.values)
+
+    class FakePool:
+        def __init__(self):
+            self.iterator = FakeIterator()
+            self.imap_args = None
+
+        def imap(self, func, items):
+            self.imap_args = (func, items)
+            return self.iterator
+
+    pool = FakePool()
+    func = object()
+    items = ["C", "CC"]
+
+    results = _imap_with_optional_timeout(pool, func, items, timeout=0.5)
+
+    assert results == ["feat-a", "feat-b"]
+    assert pool.imap_args == (func, items)
+    assert pool.iterator.timeouts == [0.5, 0.5]
+
+
+def test_conformer_timeout_error_propagates():
+    from unimol_tools.data.conformer import _imap_with_optional_timeout
+
+    class TimeoutIterator:
+        def next(self, timeout=None):
+            raise TimeoutError("worker timed out")
+
+    class FakePool:
+        def imap(self, func, items):
+            return TimeoutIterator()
+
+    with pytest.raises(TimeoutError, match="worker timed out"):
+        _imap_with_optional_timeout(FakePool(), object(), ["C"], timeout=0.01)
 
 
 def test_rdkit_calculation_hang_risk():
@@ -179,7 +217,7 @@ def test_pool_context_manager_missing():
         # Don't fail the test - just document the issue
 
 
-def test_pool_resource_cleanup():
+def test_pool_resource_cleanup(tmp_path):
     """
     Test that Pool resources are properly cleaned up.
     
@@ -195,7 +233,10 @@ def test_pool_resource_cleanup():
     
     initial_procs = len(psutil.Process().children())
     
-    gen = ConformerGen(multi_process=True)
+    gen = ConformerGen(
+        multi_process=True,
+        pretrained_dict_path=write_test_dictionary(tmp_path),
+    )
     smiles_list = ['C', 'CC', 'CCC']
     
     try:
@@ -215,17 +256,6 @@ def test_pool_resource_cleanup():
     
     # Don't fail - just document
     assert True
-
-
-@pytest.mark.network
-def test_multiprocessing_integration():
-    """
-    Integration test for multiprocessing functionality.
-    
-    This test requires network access to download model weights.
-    Run with: pytest --run-network
-    """
-    pytest.skip("Integration test - requires model weights and network")
 
 
 def test_issue_documentation_summary():

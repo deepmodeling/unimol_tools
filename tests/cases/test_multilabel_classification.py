@@ -8,6 +8,8 @@ from rdkit.Chem import PandasTools
 
 from unimol_tools import MolTrain, MolPredict
 
+pytestmark = [pytest.mark.case, pytest.mark.integration, pytest.mark.slow]
+
 CSV_URL = 'https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/tox21.csv.gz'
 SDF_URL = 'https://tripod.nih.gov/tox21/challenge/download?id=tox21_10k_data_allsdf'
 

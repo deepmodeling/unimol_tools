@@ -1,4 +1,10 @@
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-ra"
-pythonpath = ["."]
+testpaths = ["tests/unit"]
+addopts = "-ra --strict-markers"
+pythonpath = [".", "tests/cases"]
+markers = [
+    "network: tests that require external network access",
+    "case: end-to-end usage cases that may train, predict, or download assets",
+    "integration: tests that exercise multiple subsystems together",
+    "slow: tests that are expected to take longer than unit tests",
+]

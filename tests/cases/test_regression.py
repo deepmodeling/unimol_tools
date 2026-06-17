@@ -6,6 +6,8 @@ from utils_net import download_for_test
 
 from unimol_tools import MolTrain, MolPredict
 
+pytestmark = [pytest.mark.case, pytest.mark.integration, pytest.mark.slow]
+
 ESOL_TRAIN_URL = 'https://huggingface.co/datasets/HR-machine/ESol/resolve/main/train_data.csv?download=true'
 ESOL_TEST_URL = 'https://huggingface.co/datasets/HR-machine/ESol/resolve/main/test_data.csv?download=true'
 VQM24_URL = 'https://zenodo.org/records/15442257/files/DMC.npz?download=1'
