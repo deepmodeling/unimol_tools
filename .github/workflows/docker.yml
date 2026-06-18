@@ -29,6 +29,10 @@ jobs:
         run: |
           python -m pytest tests/unit -q
 
+      - name: Run pipeline smoke tests
+        run: |
+          python -m pytest tests/pipeline -q
+
   publish_package:
     name: Build and Publish
     runs-on: ubuntu-latest

@@ -57,6 +57,7 @@ class MolTrain(object):
         model_size='84m',
         pretrained_model_path=None,
         pretrained_dict_path=None,
+        load_pretrained=True,
         conf_cache_level=1,
         **params,
     ):
@@ -122,6 +123,7 @@ class MolTrain(object):
         :param model_size: str, default='84m', model size. work when model_name is unimolv2. Avaliable: 84m, 164m, 310m, 570m, 1.1B.
         :param pretrained_model_path: str, default=None, path to pretrained model.
         :param pretrained_dict_path: str, default=None, path to pretrained model's dict file.
+        :param load_pretrained: bool, default=True, whether to load pretrained model weights. For pipeline testing, we need to set this to False to avoid downloading the pretrained model weights.
         :param conf_cache_level: int, optional [0, 1, 2], default=1, configuration cache level to save the conformers to sdf file.
             - 0: no caching.
             - 1: cache if not exists.
@@ -168,6 +170,7 @@ class MolTrain(object):
             pretrained_dict_path = cfg_dict.get(
                 'pretrained_dict_path', pretrained_dict_path
             )
+            load_pretrained = cfg_dict.get('load_pretrained', load_pretrained)
             conf_cache_level = cfg_dict.get('conf_cache_level', conf_cache_level)
             known_keys = {
                 'task',
@@ -200,6 +203,7 @@ class MolTrain(object):
                 'model_size',
                 'pretrained_model_path',
                 'pretrained_dict_path',
+                'load_pretrained',
                 'conf_cache_level',
             }
             params.update({k: v for k, v in cfg_dict.items() if k not in known_keys})
@@ -242,7 +246,10 @@ class MolTrain(object):
         config.model_size = model_size
         config.pretrained_model_path = pretrained_model_path
         config.pretrained_dict_path = pretrained_dict_path
+        config.load_pretrained = load_pretrained
         config.conf_cache_level = conf_cache_level
+        for key, value in params.items():
+            config[key] = value
         self.save_path = save_path
         self.config = config
 
