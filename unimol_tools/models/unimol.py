@@ -84,13 +84,25 @@ class UniMolModel(nn.Module):
         self.output_dim = output_dim
         self.data_type = data_type
         self.remove_hs = params.get('remove_hs', False)
+        self.load_pretrained = params.get('load_pretrained', True)
         if data_type == 'molecule':
             name = "no_h" if self.remove_hs else "all_h"
             name = data_type + '_' + name
         else:
             name = data_type
 
-        if pretrained_model_path is not None:
+        if not self.load_pretrained:
+            self.pretrain_path = None
+            if pretrained_dict_path is None and pretrained_model_path is not None:
+                pretrained_dict_path = os.path.join(
+                    os.path.dirname(pretrained_model_path), "dict.txt"
+                )
+            if pretrained_dict_path is None:
+                raise ValueError(
+                    'pretrained_dict_path is required when load_pretrained=False'
+                )
+            self.dictionary = Dictionary.load(pretrained_dict_path)
+        elif pretrained_model_path is not None:
             self.pretrain_path = pretrained_model_path
             if pretrained_dict_path is None:
                 pretrained_dict_path = os.path.join(
