@@ -6,7 +6,12 @@ from unimol_tools.models import unimol as unimol_model_module
 from unimol_tools.models import unimolv2 as unimolv2_model_module
 
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.filterwarnings(
+        "ignore:Precision is ill-defined and being set to 0.0 due to no predicted samples:sklearn.exceptions.UndefinedMetricWarning"
+    ),
+]
 
 
 def write_tiny_dictionary(tmp_path):
