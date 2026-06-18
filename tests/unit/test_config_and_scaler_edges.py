@@ -39,6 +39,28 @@ def test_classification_scaler_is_noop(tmp_path):
     assert not (tmp_path / "target_scaler.ss").exists()
 
 
+def test_none_scaler_is_noop_and_does_not_dump(tmp_path):
+    target = np.array([[1.0], [2.0], [3.0]])
+    scaler = TargetScaler("none", "regression")
+
+    scaler.fit(target, str(tmp_path))
+
+    assert scaler.transform(target) is target
+    assert scaler.inverse_transform(target) is target
+    assert not (tmp_path / "target_scaler.ss").exists()
+
+
+def test_target_scaler_loads_existing_scaler(tmp_path):
+    target = np.array([[1.0], [2.0], [3.0]])
+    scaler = TargetScaler("standard", "regression")
+    scaler.fit(target, str(tmp_path))
+
+    loaded = TargetScaler("standard", "regression", load_dir=str(tmp_path))
+    restored = loaded.inverse_transform(loaded.transform(target))
+
+    assert np.allclose(restored, target)
+
+
 def test_multilabel_regression_scaler_roundtrip(tmp_path):
     target = np.array([[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]])
     scaler = TargetScaler("standard", "multilabel_regression")

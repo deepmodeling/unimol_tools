@@ -82,6 +82,38 @@ def test_splitter_select_uses_each_group_as_test_fold():
         assert not set(train_idx).intersection(set(test_idx))
 
 
+def test_splitter_group_keeps_groups_out_of_train_fold():
+    smiles = np.array(["C", "CC", "CCC", "O"])
+    group = np.array(["a", "a", "b", "b"])
+
+    folds = Splitter(method="group", kfold=2).split(smiles, group=group)
+
+    assert len(folds) == 2
+    for train_idx, test_idx in folds:
+        assert not set(group[train_idx]).intersection(set(group[test_idx]))
+
+
+def test_splitter_stratified_is_reproducible_and_exhaustive():
+    smiles = np.array(["C", "CC", "CCC", "O", "N", "CO"])
+    labels = np.array([0, 0, 0, 1, 1, 1])
+
+    split_a = Splitter(method="stratified", kfold=3, seed=11).split(
+        smiles,
+        group=labels,
+    )
+    split_b = Splitter(method="stratified", kfold=3, seed=11).split(
+        smiles,
+        group=labels,
+    )
+
+    assert [(tr.tolist(), te.tolist()) for tr, te in split_a] == [
+        (tr.tolist(), te.tolist()) for tr, te in split_b
+    ]
+    assert sorted(np.concatenate([test_idx for _, test_idx in split_a]).tolist()) == list(
+        range(len(smiles))
+    )
+
+
 def test_splitter_single_fold_returns_all_train_indices():
     smiles = np.array(["C", "CC"])
 

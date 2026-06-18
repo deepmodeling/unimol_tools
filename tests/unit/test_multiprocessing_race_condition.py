@@ -1,39 +1,15 @@
-"""
-Multiprocessing Race Condition Tests for Issue #19
+import ast
+import inspect
 
-This file reproduces and documents the multiprocessing race condition issues
-in unimol_tools, specifically in conformer.py.
-
-Issue Summary:
-When multi_process=True is set, the predict method in conformer.py can hang
-intermittently due to missing pool.join() calls and improper exception handling.
-
-These tests demonstrate the issues and will FAIL or exhibit problems on the
-current main branch, serving as documentation for the expected fixes.
-"""
-
-import os
-import sys
-import time
-import pytest
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
-from multiprocessing import Pool
-import signal
+import pytest
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+from unimol_tools.data import conformer
 from unimol_tools.data.conformer import (
     ConformerGen,
-    inner_smi2coords,
-    UniMolV2Feature
+    UniMolV2Feature,
+    _imap_with_optional_timeout,
 )
-
-
-def delayed_single_process(smiles):
-    time.sleep(0.1)  # Simulate computation delay
-    return {"src_coord": np.zeros((5, 3))}, None
 
 
 def write_test_dictionary(tmp_path):
@@ -42,101 +18,83 @@ def write_test_dictionary(tmp_path):
     return str(dict_path)
 
 
-def test_missing_pool_join_race_condition():
-    """
-    Demonstrate the race condition caused by missing pool.join().
-    
-    The issue: When pool.close() is called without pool.join(), the main process
-    may continue before all worker processes complete, causing unpredictable
-    behavior and potential hangs.
-    
-    Location: unimol_tools/data/conformer.py, transform() methods (~lines 191, 466)
-    """
-    smiles_list = ["CC", "CCO", "CCN", "CCC"]
+class FakeIterator:
+    def __init__(self, values):
+        self.values = iter(values)
+        self.timeouts = []
 
-    # Demonstrate the pattern WITHOUT pool.join() (the problematic way)
-    pool = Pool(processes=2)
-    try:
-        results = list(pool.imap(delayed_single_process, smiles_list))
-    finally:
-        pool.close()
-        pool.join()
-    # The production bug this test documents was a missing pool.join(); this
-    # test still joins its own pool so the test suite does not leak processes.
-    
-    # Verify results are returned (may be incomplete due to race condition)
-    # This test documents that results may be unreliable without pool.join()
-    assert len(results) == len(smiles_list), \
-        "Results incomplete - demonstrates race condition risk"
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self.values)
+
+    def next(self, timeout=None):
+        self.timeouts.append(timeout)
+        return next(self.values)
 
 
-def test_bare_except_keyboard_interrupt():
-    """
-    Demonstrate that bare 'except:' clauses catch KeyboardInterrupt.
-    
-    Issue: The code uses bare 'except:' which catches ALL exceptions including
-    KeyboardInterrupt, making it impossible to interrupt the process with Ctrl+C.
-    
-    Location: unimol_tools/data/conformer.py, inner_smi2coords() (~line 279)
-    
-    Expected Fix: Change 'except:' to 'except Exception:' to allow
-    KeyboardInterrupt to propagate.
-    """
-    # Demonstrate the difference between bare except and specific except
-    
-    # Bare except (current problematic implementation)
-    def bare_except_handler():
-        try:
-            raise KeyboardInterrupt("User pressed Ctrl+C")
-        except:  # This catches EVERYTHING including KeyboardInterrupt
-            return "caught_by_bare_except"
-    
-    # Specific except (expected fix)
-    def specific_except_handler():
-        try:
-            raise KeyboardInterrupt("User pressed Ctrl+C")
-        except Exception:  # This does NOT catch KeyboardInterrupt
-            return "caught_by_specific_except"
-    
-    # Test bare except behavior
-    result = bare_except_handler()
-    assert result == "caught_by_bare_except", \
-        "Bare except catches KeyboardInterrupt - this is the bug!"
-    
-    # Test specific except behavior - KeyboardInterrupt should propagate
-    try:
-        specific_except_handler()
-        pytest.fail("KeyboardInterrupt should have propagated")
-    except KeyboardInterrupt:
-        # This is the CORRECT behavior - KeyboardInterrupt should propagate
-        pass
+class FakePool:
+    def __init__(self, values):
+        self.iterator = FakeIterator(values)
+        self.imap_args = None
+        self.entered = False
+        self.exited = False
+        self.exit_exc_type = None
+
+    def __enter__(self):
+        self.entered = True
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.exited = True
+        self.exit_exc_type = exc_type
+        return False
+
+    def imap(self, func, items):
+        self.imap_args = (func, list(items))
+        return self.iterator
 
 
-def test_conformer_timeout_is_passed_to_pool_iterator():
-    """
-    Verify multiprocessing conformer generation can bound worker waits.
-    """
-    from unimol_tools.data.conformer import _imap_with_optional_timeout
+def unimol_feature(coord_value=1.0):
+    return {
+        "src_tokens": np.array([0, 1, 2]),
+        "src_distance": np.ones((3, 3), dtype=np.float32),
+        "src_coord": np.full((3, 3), coord_value, dtype=np.float32),
+        "src_edge_type": np.ones((3, 3), dtype=int),
+    }
 
-    class FakeIterator:
-        def __init__(self):
-            self.timeouts = []
-            self.values = iter(["feat-a", "feat-b"])
 
-        def next(self, timeout=None):
-            self.timeouts.append(timeout)
-            return next(self.values)
+def unimolv2_feature(coord_value=1.0):
+    return {
+        "src_tokens": [6],
+        "src_coord": np.full((1, 3), coord_value, dtype=np.float32),
+        "atom_feat": np.ones((1, 8), dtype=np.int32),
+        "atom_mask": np.ones(1, dtype=np.int64),
+        "edge_feat": np.ones((1, 1, 3), dtype=np.int32),
+        "shortest_path": np.ones((1, 1), dtype=np.int32),
+        "degree": np.ones(1, dtype=np.int32),
+        "pair_type": np.ones((1, 1, 2), dtype=np.int32),
+        "attn_bias": np.zeros((2, 2), dtype=np.float32),
+    }
 
-    class FakePool:
-        def __init__(self):
-            self.iterator = FakeIterator()
-            self.imap_args = None
 
-        def imap(self, func, items):
-            self.imap_args = (func, items)
-            return self.iterator
+def install_fake_pool(monkeypatch, values):
+    created = []
 
-    pool = FakePool()
+    def pool_factory(*args, **kwargs):
+        pool = FakePool(values)
+        pool.args = args
+        pool.kwargs = kwargs
+        created.append(pool)
+        return pool
+
+    monkeypatch.setattr(conformer, "Pool", pool_factory)
+    return created
+
+
+def test_imap_with_optional_timeout_passes_timeout_to_iterator():
+    pool = FakePool(["feat-a", "feat-b"])
     func = object()
     items = ["C", "CC"]
 
@@ -147,181 +105,110 @@ def test_conformer_timeout_is_passed_to_pool_iterator():
     assert pool.iterator.timeouts == [0.5, 0.5]
 
 
-def test_conformer_timeout_error_propagates():
-    from unimol_tools.data.conformer import _imap_with_optional_timeout
+def test_imap_without_timeout_consumes_iterator_normally():
+    pool = FakePool(["feat-a", "feat-b"])
+
+    results = _imap_with_optional_timeout(pool, object(), ["C", "CC"])
+
+    assert results == ["feat-a", "feat-b"]
+    assert pool.iterator.timeouts == []
+
+
+def test_imap_timeout_error_propagates():
+    class TimeoutIterator:
+        def next(self, timeout=None):
+            raise TimeoutError("worker timed out")
+
+    class TimeoutPool:
+        def imap(self, func, items):
+            return TimeoutIterator()
+
+    with pytest.raises(TimeoutError, match="worker timed out"):
+        _imap_with_optional_timeout(TimeoutPool(), object(), ["C"], timeout=0.01)
+
+
+def test_conformer_transform_uses_pool_context_and_timeout(monkeypatch, tmp_path):
+    smiles = ["C", "CC"]
+    created = install_fake_pool(
+        monkeypatch,
+        [(unimol_feature(), None), (unimol_feature(), None)],
+    )
+    gen = ConformerGen(
+        multi_process=True,
+        conformer_timeout=0.25,
+        pretrained_dict_path=write_test_dictionary(tmp_path),
+    )
+
+    inputs, mols = gen.transform(smiles)
+
+    pool = created[0]
+    assert pool.entered is True
+    assert pool.exited is True
+    assert pool.iterator.timeouts == [0.25, 0.25]
+    assert pool.imap_args[1] == smiles
+    assert len(inputs) == len(smiles)
+    assert mols == [None, None]
+
+
+def test_unimolv2_transform_uses_pool_context_and_timeout(monkeypatch):
+    smiles = ["C", "CC"]
+    created = install_fake_pool(
+        monkeypatch,
+        [(unimolv2_feature(), None), (unimolv2_feature(), None)],
+    )
+    gen = UniMolV2Feature(multi_process=True, conformer_timeout=0.5)
+
+    inputs, mols = gen.transform(smiles)
+
+    pool = created[0]
+    assert pool.entered is True
+    assert pool.exited is True
+    assert pool.iterator.timeouts == [0.5, 0.5]
+    assert pool.imap_args[1] == smiles
+    assert len(inputs) == len(smiles)
+    assert mols == [None, None]
+
+
+def test_pool_context_manager_exits_when_timeout_raises(monkeypatch, tmp_path):
+    created = []
 
     class TimeoutIterator:
         def next(self, timeout=None):
             raise TimeoutError("worker timed out")
 
-    class FakePool:
-        def imap(self, func, items):
-            return TimeoutIterator()
+    class TimeoutPool(FakePool):
+        def __init__(self):
+            super().__init__([])
+            self.iterator = TimeoutIterator()
 
-    with pytest.raises(TimeoutError, match="worker timed out"):
-        _imap_with_optional_timeout(FakePool(), object(), ["C"], timeout=0.01)
+    def pool_factory(*args, **kwargs):
+        pool = TimeoutPool()
+        created.append(pool)
+        return pool
 
-
-def test_rdkit_calculation_hang_risk():
-    """
-    Document that RDKit calculations may hang on certain molecules.
-    
-    Issue: AllChem.EmbedMolecule() and AllChem.MMFFOptimizeMolecule() in
-    inner_smi2coords() may hang indefinitely on certain molecular structures.
-    Combined with no timeout mechanism, this causes the entire process to hang.
-    
-    Location: unimol_tools/data/conformer.py, inner_smi2coords()
-    """
-    # Test with a valid SMILES to ensure RDKit is working
-    try:
-        mol = inner_smi2coords("CC", return_mol=True)
-        from rdkit.Chem import Mol
-        assert isinstance(mol, Mol)
-    except ImportError:
-        pytest.skip("RDKit not available")
-    except Exception as e:
-        pytest.skip(f"RDKit calculation failed: {e}")
-    
-    # The actual issue is that certain molecules may cause infinite loops
-    # in RDKit's EmbedMolecule or MMFFOptimizeMolecule
-    # This is documented here as a known risk factor for hangs
-
-
-def test_pool_context_manager_missing():
-    """
-    Demonstrate that Pool is not used with context manager.
-    
-    Issue: The code manually creates and manages Pool instances instead of
-    using 'with Pool() as pool:' which ensures proper cleanup.
-    
-    Expected Fix: Use context manager:
-        with Pool(processes=min(8, os.cpu_count())) as pool:
-            results = [...]
-    """
-    import ast
-    import inspect
-    from unimol_tools.data import conformer
-    
-    source_file = inspect.getfile(conformer)
-    with open(source_file, 'r') as f:
-        content = f.read()
-    
-    # Check if context manager is used for Pool
-    if 'with Pool(' in content or 'with multiprocessing.Pool(' in content:
-        # Context manager is used - this is good
-        pass
-    else:
-        # Context manager not used - document the issue
-        print("\n[ISSUE DETECTED] Pool is not used with context manager")
-        print("This can lead to resource leaks if exceptions occur")
-        # Don't fail the test - just document the issue
-
-
-def test_pool_resource_cleanup(tmp_path):
-    """
-    Test that Pool resources are properly cleaned up.
-    
-    This test verifies that after transform() completes, all worker
-    processes are properly terminated.
-    """
-    try:
-        import psutil
-    except ImportError:
-        pytest.skip("psutil not available")
-    
-    from unimol_tools.data.conformer import ConformerGen
-    
-    initial_procs = len(psutil.Process().children())
-    
+    monkeypatch.setattr(conformer, "Pool", pool_factory)
     gen = ConformerGen(
         multi_process=True,
+        conformer_timeout=0.01,
         pretrained_dict_path=write_test_dictionary(tmp_path),
     )
-    smiles_list = ['C', 'CC', 'CCC']
-    
-    try:
-        gen.transform(smiles_list)
-    except:
-        pass
-    
-    time.sleep(1)  # Give time for cleanup
-    
-    final_procs = len(psutil.Process().children())
-    
-    # Document the state
-    if final_procs > initial_procs + 2:
-        print(f"\n[ISSUE DETECTED] Zombie processes detected: "
-              f"{initial_procs} -> {final_procs}")
-        print("This indicates improper pool cleanup")
-    
-    # Don't fail - just document
-    assert True
+
+    with pytest.raises(TimeoutError, match="worker timed out"):
+        gen.transform(["C"])
+
+    assert created[0].entered is True
+    assert created[0].exited is True
+    assert created[0].exit_exc_type is TimeoutError
 
 
-def test_issue_documentation_summary():
-    """
-    Summary test that documents all issues from #19.
-    
-    This test serves as living documentation for the issues that need fixing.
-    """
-    issues = [
-        {
-            "id": 1,
-            "issue": "Missing pool.join() calls",
-            "location": "conformer.py, transform() methods (~lines 191, 466)",
-            "impact": "Race condition causing intermittent hangs",
-            "fix": "Add pool.join() after pool.close() or use context manager"
-        },
-        {
-            "id": 2,
-            "issue": "Bare except: clauses",
-            "location": "conformer.py, inner_smi2coords() (~line 279)",
-            "impact": "KeyboardInterrupt is suppressed, cannot cancel with Ctrl+C",
-            "fix": "Change 'except:' to 'except Exception:'"
-        },
-        {
-            "id": 3,
-            "issue": "No timeout mechanism",
-            "location": "conformer.py, pool.imap() calls",
-            "impact": "Hung RDKit calculations cause indefinite hangs",
-            "fix": "Add timeout parameter to pool.imap()"
-        },
-        {
-            "id": 4,
-            "issue": "No proper cleanup on interruption",
-            "location": "conformer.py, transform() methods",
-            "impact": "Zombie processes may remain after interruption",
-            "fix": "Use try/finally or context manager for pool cleanup"
-        },
-        {
-            "id": 5,
-            "issue": "Hardcoded process count",
-            "location": "conformer.py, _init_features()",
-            "impact": "Limited to 8 processes regardless of system",
-            "fix": "Make process count configurable"
-        }
+def test_conformer_source_has_no_bare_except_handlers():
+    source = inspect.getsource(conformer)
+    tree = ast.parse(source)
+
+    bare_excepts = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and node.type is None
     ]
-    
-    print("\n" + "="*70)
-    print("Issue #19: Multiprocessing Race Condition - Summary")
-    print("="*70)
-    
-    for issue in issues:
-        print(f"\n{issue['id']}. {issue['issue']}")
-        print(f"   Location: {issue['location']}")
-        print(f"   Impact: {issue['impact']}")
-        print(f"   Suggested Fix: {issue['fix']}")
-    
-    print("\n" + "="*70)
-    
-    # This test always passes - it's documentation only
-    assert True
 
-
-if __name__ == "__main__":
-    """
-    Run tests directly
-    Usage: python test_multiprocessing_race_condition.py
-    """
-    import sys
-    sys.exit(pytest.main([__file__, "-v", "-s"]))
+    assert bare_excepts == []

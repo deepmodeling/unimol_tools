@@ -269,7 +269,7 @@ def inner_smi2coords(smi, seed=42, mode='fast', remove_hs=True, return_mol=False
                 # some conformer can not use MMFF optimize
                 AllChem.MMFFOptimizeMolecule(mol)
                 coordinates = mol.GetConformer().GetPositions().astype(np.float32)
-            except:
+            except Exception:
                 coordinates = mol.GetConformer().GetPositions().astype(np.float32)
         ## for fast test... ignore this ###
         elif res == -1 and mode == 'heavy':
@@ -278,7 +278,7 @@ def inner_smi2coords(smi, seed=42, mode='fast', remove_hs=True, return_mol=False
                 # some conformer can not use MMFF optimize
                 AllChem.MMFFOptimizeMolecule(mol)
                 coordinates = mol.GetConformer().GetPositions().astype(np.float32)
-            except:
+            except Exception:
                 AllChem.Compute2DCoords(mol)
                 coordinates_2d = mol.GetConformer().GetPositions().astype(np.float32)
                 coordinates = coordinates_2d
@@ -286,7 +286,7 @@ def inner_smi2coords(smi, seed=42, mode='fast', remove_hs=True, return_mol=False
             AllChem.Compute2DCoords(mol)
             coordinates_2d = mol.GetConformer().GetPositions().astype(np.float32)
             coordinates = coordinates_2d
-    except:
+    except Exception:
         print("Failed to generate conformer, replace with zeros.")
         coordinates = np.zeros((len(atoms), 3))
 
@@ -590,7 +590,7 @@ def safe_index(l, e):
     """
     try:
         return l.index(e)
-    except:
+    except Exception:
         return len(l) - 1
 
 
