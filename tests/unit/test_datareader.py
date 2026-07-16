@@ -13,6 +13,37 @@ def test_read_data_from_smiles_list():
     assert result["raw_data"].shape[0] == len(smiles)
 
 
+def test_read_data_from_dict_converts_atoms_and_multitarget():
+    data = {
+        "atoms": [6, 8],
+        "coordinates": [[0, 0, 0], [1, 0, 0]],
+        "target": [[1.0, 2.0]],
+    }
+    reader = MolDataReader()
+
+    result = reader.read_data(data, task="multilabel_regression")
+
+    assert result["atoms"] == [["C", "O"]]
+    assert result["coordinates"] == [[[0, 0, 0], [1, 0, 0]]]
+    assert result["target_cols"] == ["TARGET0", "TARGET1"]
+    assert result["raw_target"] == [[1.0, 2.0]]
+
+
+def test_predict_mode_fills_missing_target_columns():
+    df = pd.DataFrame({"SMILES": ["C"]})
+    reader = MolDataReader()
+
+    result = reader.read_data(
+        df,
+        is_train=False,
+        task="regression",
+        target_cols="A,B",
+    )
+
+    assert result["target_cols"] == ["A", "B"]
+    assert result["raw_target"] == [[-1.0, -1.0]]
+
+
 def test_check_smiles_behavior():
     reader = MolDataReader()
     # invalid SMILES should return False during training when not strict

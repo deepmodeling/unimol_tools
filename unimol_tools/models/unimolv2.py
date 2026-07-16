@@ -71,9 +71,12 @@ class UniMolV2Model(nn.Module):
         self.output_dim = output_dim
         self.model_size = model_size
         self.remove_hs = params.get('remove_hs', False)
+        self.load_pretrained = params.get('load_pretrained', True)
 
         name = model_size
-        if pretrained_model_path is not None:
+        if not self.load_pretrained:
+            self.pretrain_path = None
+        elif pretrained_model_path is not None:
             self.pretrain_path = pretrained_model_path
         else:
             weight_dir = get_weight_dir()
